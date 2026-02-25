@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Speak11 - Text-to-Speech for macOS</title>
+  <meta name="description" content="Select text in any app, press Option+Shift+/, hear it read aloud. A macOS menu bar app that uses ElevenLabs for text-to-speech.">
+  <meta name="keywords" content="text to speech, macOS, TTS, ElevenLabs, menu bar app, read aloud, accessibility, speak selected text">
+  <meta name="author" content="Stefano Martiniani">
+
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='28' fill='%232678F5'/%3E%3Cg transform='translate(64,64)' stroke='white' stroke-width='5' stroke-linecap='round' fill='none'%3E%3Cline x1='0' y1='-18' x2='0' y2='18'/%3E%3Cline x1='-12' y1='-12' x2='-12' y2='12'/%3E%3Cline x1='12' y1='-12' x2='12' y2='12'/%3E%3Cline x1='-24' y1='-24' x2='-24' y2='24'/%3E%3Cline x1='24' y1='-24' x2='24' y2='24'/%3E%3Cline x1='-36' y1='-10' x2='-36' y2='10'/%3E%3Cline x1='36' y1='-10' x2='36' y2='10'/%3E%3C/g%3E%3C/svg%3E">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Speak11 - Text-to-Speech for macOS">
+  <meta property="og:description" content="Select text in any app, press Option+Shift+/, hear it read aloud. Uses ElevenLabs for text-to-speech.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://smcantab.github.io/speak11/">
+  <meta property="og:image" content="https://smcantab.github.io/speak11/social-card.png">
+  <meta property="og:image:width" content="2400">
+  <meta property="og:image:height" content="1260">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Speak11 - Text-to-Speech for macOS">
+  <meta name="twitter:description" content="Select text in any app, press Option+Shift+/, hear it read aloud. Uses ElevenLabs for text-to-speech.">
+  <meta name="twitter:image" content="https://smcantab.github.io/speak11/social-card.png">
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      color: #1d1d1f;
+      background: #fafafa;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .hero-bg {
+      background: linear-gradient(180deg, #f0f0f3 0%, #fafafa 100%);
+      width: 100%;
+    }
+
+    .hero {
+      text-align: center;
+      padding: 80px 24px 64px;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .icon {
+      width: 128px;
+      height: 128px;
+      margin-bottom: 28px;
+      filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.1));
+    }
+
+    h1 {
+      font-size: 2.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+    }
+
+    .tagline {
+      font-size: 1.2rem;
+      color: #333;
+      line-height: 1.7;
+      margin-bottom: 36px;
+    }
+
+    .tagline a { color: #0071e3; text-decoration: none; }
+    .tagline a:hover { text-decoration: underline; }
+
+    .hotkey {
+      display: inline-block;
+      background: #e8e8ed;
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 0.95em;
+    }
+
+    .buttons {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 20px;
+      margin-bottom: 14px;
+    }
+
+    .cta {
+      display: inline-block;
+      background: #0071e3;
+      color: #fff;
+      text-decoration: none;
+      padding: 14px 32px;
+      border-radius: 10px;
+      font-size: 1.05rem;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+
+    .cta:hover { background: #0060c0; }
+
+    .secondary {
+      color: #0071e3;
+      text-decoration: none;
+      font-size: 1.05rem;
+      font-weight: 500;
+    }
+
+    .secondary:hover { text-decoration: underline; }
+
+    .prereq {
+      font-size: 0.85rem;
+      color: #888;
+    }
+
+    .prereq a { color: #888; text-decoration: none; }
+    .prereq a:hover { text-decoration: underline; }
+
+    .features {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+
+    .feature {
+      background: #fff;
+      border: 1px solid #e8e8ed;
+      border-radius: 12px;
+      padding: 24px;
+    }
+
+    .feature-icon {
+      display: inline-block;
+      width: 32px;
+      height: 32px;
+      margin-bottom: 10px;
+    }
+
+    .feature h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .feature p {
+      font-size: 0.95rem;
+      color: #555;
+      line-height: 1.5;
+    }
+
+    footer {
+      text-align: center;
+      padding: 28px 24px;
+      font-size: 0.85rem;
+      color: #888;
+      border-top: 1px solid #e8e8ed;
+      line-height: 1.6;
+    }
+
+    footer a { color: #555; text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 540px) {
+      .hero { padding: 48px 20px 40px; }
+      h1 { font-size: 1.8rem; }
+      .buttons { flex-direction: column; gap: 12px; }
+      .features { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <section class="hero-bg">
+    <div class="hero">
+      <!-- Inline SVG to avoid MIME-type issues with raw.githubusercontent.com -->
+      <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+        <rect width="128" height="128" rx="28" fill="#2678F5"/>
+        <g transform="translate(64,64)" stroke="white" stroke-width="5" stroke-linecap="round" fill="none">
+          <line x1="0" y1="-18" x2="0" y2="18"/>
+          <line x1="-12" y1="-12" x2="-12" y2="12"/>
+          <line x1="12" y1="-12" x2="12" y2="12"/>
+          <line x1="-24" y1="-24" x2="-24" y2="24"/>
+          <line x1="24" y1="-24" x2="24" y2="24"/>
+          <line x1="-36" y1="-10" x2="-36" y2="10"/>
+          <line x1="36" y1="-10" x2="36" y2="10"/>
+        </g>
+      </svg>
+      <h1>Speak11</h1>
+      <p class="tagline">
+        Select text in any app, press <span class="hotkey">&#x2325;&#x21E7;/</span>, hear it read aloud.<br>
+        Uses <a href="https://elevenlabs.io">ElevenLabs</a> for text-to-speech. Runs in your menu bar.
+      </p>
+      <div class="buttons">
+        <a href="https://github.com/smcantab/speak11/archive/refs/heads/main.zip" class="cta">Download</a>
+        <a href="https://github.com/smcantab/speak11" class="secondary">View on GitHub</a>
+      </div>
+      <p class="prereq">Requires macOS 13+ and a free <a href="https://elevenlabs.io">ElevenLabs</a> API key</p>
+    </div>
+  </section>
+
+  <div class="features">
+    <div class="feature">
+      <svg class="feature-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="8" width="28" height="18" rx="3" stroke="#1d1d1f" stroke-width="1.5"/>
+        <line x1="8" y1="14" x2="12" y2="14" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="15" y1="14" x2="24" y2="14" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="8" y1="18" x2="16" y2="18" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="19" y1="18" x2="24" y2="18" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <h3>One hotkey, any app</h3>
+      <p>Works in browsers, editors, Electron apps, anything. The hotkey is system-level, so no app can block it.</p>
+    </div>
+    <div class="feature">
+      <svg class="feature-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M16 4v24M10 8v16M22 8v16M4 12v8M28 12v8" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <h3>Pick a voice</h3>
+      <p>Seven voices built in, or paste any voice ID from the ElevenLabs Voice Library.</p>
+    </div>
+    <div class="feature">
+      <svg class="feature-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <line x1="6" y1="6" x2="6" y2="26" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="6" cy="20" r="3" fill="#1d1d1f"/>
+        <line x1="16" y1="6" x2="16" y2="26" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="16" cy="12" r="3" fill="#1d1d1f"/>
+        <line x1="26" y1="6" x2="26" y2="26" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="26" cy="17" r="3" fill="#1d1d1f"/>
+      </svg>
+      <h3>Tune it</h3>
+      <p>Speed, stability, similarity, style, all adjustable from the menu bar. Changes apply instantly.</p>
+    </div>
+    <div class="feature">
+      <svg class="feature-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="6" y="4" width="20" height="24" rx="2" stroke="#1d1d1f" stroke-width="1.5"/>
+        <path d="M12 15l3 3 5-6" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <h3>No dependencies</h3>
+      <p>Uses curl and afplay, which already ship with macOS. Double-click the installer and you're set.</p>
+    </div>
+    <div class="feature">
+      <svg class="feature-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="8" y="14" width="16" height="12" rx="2" stroke="#1d1d1f" stroke-width="1.5"/>
+        <path d="M11 14v-4a5 5 0 0110 0v4" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="16" cy="20" r="1.5" fill="#1d1d1f"/>
+      </svg>
+      <h3>Key stays in Keychain</h3>
+      <p>Your ElevenLabs API key goes straight into the macOS Keychain. It's never written to a file.</p>
+    </div>
+    <div class="feature">
+      <svg class="feature-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M16 27C10 22.5 5 17.5 5 12.5a5.5 5.5 0 0111 0 5.5 5.5 0 0111 0c0 5-5 10-11 14.5z" stroke="#1d1d1f" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+      <h3>Free and open</h3>
+      <p>Released under the Unlicense. Do whatever you want with it.</p>
+    </div>
+  </div>
+
+  <footer>
+    Created by <a href="https://github.com/smcantab">Stefano Martiniani</a> ·
+    <a href="https://github.com/smcantab/speak11">GitHub</a> ·
+    <a href="https://elevenlabs.io/pricing">ElevenLabs pricing</a> ·
+    macOS 13+
+  </footer>
+</body>
+</html>
