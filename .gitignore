@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Swift build artifacts
+*.o
+*.swiftmodule
+*.swiftdoc
+*.dSYM/
+.build/
+.swiftpm/
+
+# App bundles (built during install, not tracked)
+*.app
+
+# IDE
+.vscode/
+.idea/
