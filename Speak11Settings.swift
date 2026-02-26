@@ -11,7 +11,7 @@ private let speakPath  = (NSHomeDirectory() as NSString).appendingPathComponent(
 
 struct Config {
     // Backend selection
-    var ttsBackend:         String = "elevenlabs"   // "elevenlabs" or "local"
+    var ttsBackend:         String = "auto"          // "auto", "elevenlabs", or "local"
     var backendsInstalled:  String = "elevenlabs"   // "elevenlabs", "local", or "both"
 
     // ElevenLabs settings
@@ -145,14 +145,6 @@ private let styleSteps: [(label: String, value: Double)] = [
     ("0.75", 0.75), ("1.0 — max", 1.0),
 ]
 
-private let languageSteps: [(label: String, code: String)] = [
-    ("American English", "a"),
-    ("British English",  "b"),
-    ("Spanish",          "e"),
-    ("French",           "f"),
-    ("Italian",          "i"),
-]
-
 // MARK: - Global hotkey ⌥⇧/ → speak.sh
 //
 // Keycode 44 = forward slash on ANSI/ISO keyboards (US and most layouts).
@@ -204,6 +196,9 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     private var respeakTimer: Timer?
     private let speakLock = NSLock()
 
+    // Credits cache (fetched from ElevenLabs API)
+    private var cachedCredits: (used: Int, limit: Int, fetchedAt: Date)?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(
@@ -226,6 +221,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             config = fresh
             rebuildMenu()
         }
+        fetchCredits()
     }
 
     func setSpeaking(_ active: Bool) {
@@ -555,8 +551,8 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         let menu = NSMenu()
         menu.delegate = self
 
-        // Backend submenu — only when both backends are installed
-        if config.backendsInstalled == "both" {
+        // Backend submenu — when both backends are installed or auto mode
+        if config.backendsInstalled == "both" || config.ttsBackend == "auto" {
             menu.addItem(submenuItem("Backend", items: buildBackendItems()))
             menu.addItem(.separator())
         }
@@ -574,7 +570,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
 
         // Backend-specific settings
         if config.ttsBackend == "local" {
-            menu.addItem(submenuItem("Language", items: buildLanguageItems()))
+            // Language is auto-derived from voice prefix — no menu needed
         } else {
             menu.addItem(submenuItem("Model", items: buildModelItems()))
             menu.addItem(submenuItem("Stability", items: buildStabilityItems()))
@@ -589,9 +585,17 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             menu.addItem(boost)
         }
 
-        // API Key — when ElevenLabs is active or both backends installed
-        if config.ttsBackend == "elevenlabs" || config.backendsInstalled == "both" {
+        // API Key + Credits — when ElevenLabs or Auto is active
+        if config.ttsBackend == "elevenlabs" || config.ttsBackend == "auto" {
             menu.addItem(.separator())
+
+            // Credits display (hidden until fetched)
+            let creditsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            creditsItem.tag = 999
+            creditsItem.isEnabled = false
+            creditsItem.isHidden = true
+            menu.addItem(creditsItem)
+
             let apiItem = NSMenuItem(
                 title:  "API Key\u{2026}",
                 action: #selector(manageAPIKey),
@@ -623,6 +627,8 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
 
     private func buildBackendItems() -> [NSMenuItem] {
         [
+            item("Auto", #selector(pickBackend(_:)),
+                 repr: "auto", on: config.ttsBackend == "auto"),
             item("ElevenLabs", #selector(pickBackend(_:)),
                  repr: "elevenlabs", on: config.ttsBackend == "elevenlabs"),
             item("Local (Kokoro)", #selector(pickBackend(_:)),
@@ -685,13 +691,6 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
                  repr: String(s.value), on: abs(s.value - config.style) < 0.01)
         }
         return items
-    }
-
-    private func buildLanguageItems() -> [NSMenuItem] {
-        languageSteps.map { l in
-            item(l.label, #selector(pickLanguage(_:)),
-                 repr: l.code, on: l.code == config.localLang)
-        }
     }
 
     // MARK: Helpers
@@ -824,12 +823,47 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         scheduleRespeak()
     }
 
-    @objc private func pickLanguage(_ sender: NSMenuItem) {
-        guard let code = sender.representedObject as? String else { return }
-        config.localLang = code
-        config.save()
-        rebuildMenu()
-        scheduleRespeak()
+    // MARK: - Credits Display
+
+    private func fetchCredits() {
+        guard config.ttsBackend == "elevenlabs" || config.ttsBackend == "auto" else { return }
+        guard let key = readAPIKey(), !key.isEmpty else { return }
+
+        // Use cache if fresh (< 60s old)
+        if let cached = cachedCredits, Date().timeIntervalSince(cached.fetchedAt) < 60 {
+            updateCreditsMenuItem(used: cached.used, limit: cached.limit)
+            return
+        }
+
+        guard let url = URL(string: "https://api.elevenlabs.io/v1/user/subscription") else { return }
+        var request = URLRequest(url: url)
+        request.setValue(key, forHTTPHeaderField: "xi-api-key")
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let data = data, error == nil,
+                  let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let used = json["character_count"] as? Int,
+                  let limit = json["character_limit"] as? Int else { return }
+
+            self?.cachedCredits = (used: used, limit: limit, fetchedAt: Date())
+
+            DispatchQueue.main.async {
+                self?.updateCreditsMenuItem(used: used, limit: limit)
+            }
+        }.resume()
+    }
+
+    private func updateCreditsMenuItem(used: Int, limit: Int) {
+        guard let menu = statusItem.menu,
+              let creditsItem = menu.item(withTag: 999) else { return }
+        let fmt = NumberFormatter()
+        fmt.numberStyle = .decimal
+        let remaining = max(limit - used, 0)
+        let rStr = fmt.string(from: NSNumber(value: remaining)) ?? "\(remaining)"
+        let lStr = fmt.string(from: NSNumber(value: limit)) ?? "\(limit)"
+        creditsItem.title = "Credits: \(rStr) / \(lStr)"
+        creditsItem.isHidden = false
     }
 
     // MARK: - API Key Management

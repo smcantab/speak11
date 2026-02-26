@@ -238,7 +238,7 @@ chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/curl"
 # Pipe non-empty text so the script gets past the blank-text guard and
 # reaches the API key check.  Expect exit 1 (key not found).
 check_exit "empty ELEVENLABS_API_KEY with no Keychain entry → exits 1" 1 \
-    bash -c 'echo "hello world" | env PATH="'"$_STUBS"':$PATH" ELEVENLABS_API_KEY="" bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello world" | env PATH="'"$_STUBS"':$PATH" ELEVENLABS_API_KEY="" TTS_BACKEND=elevenlabs bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -351,7 +351,7 @@ resolve_backend_config() {
         _CONFIG="$conf"
         [ -f "$_CONFIG" ] && source "$_CONFIG"
         # Priority: env var > config file > hardcoded default
-        TTS_BACKEND="${_ENV_TTS_BACKEND:-${TTS_BACKEND:-elevenlabs}}"
+        TTS_BACKEND="${_ENV_TTS_BACKEND:-${TTS_BACKEND:-auto}}"
         LOCAL_VOICE="${_ENV_LOCAL_VOICE:-${LOCAL_VOICE:-af_heart}}"
         LOCAL_LANG="${_ENV_LOCAL_LANG:-${LOCAL_LANG:-a}}"
         echo "${TTS_BACKEND}|${LOCAL_VOICE}|${LOCAL_LANG}"
@@ -361,8 +361,8 @@ resolve_backend_config() {
 TMPCONF=$(mktemp)
 printf 'TTS_BACKEND="local"\nLOCAL_VOICE="am_adam"\nLOCAL_LANG="b"\n' > "$TMPCONF"
 
-check "no config → backend defaults to elevenlabs" \
-    "elevenlabs" "$(resolve_backend_config /nonexistent | cut -d'|' -f1)"
+check "no config → backend defaults to auto" \
+    "auto" "$(resolve_backend_config /nonexistent | cut -d'|' -f1)"
 check "no config → local voice defaults to af_heart" \
     "af_heart" "$(resolve_backend_config /nonexistent | cut -d'|' -f2)"
 check "no config → local lang defaults to a" \
@@ -519,7 +519,7 @@ printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
 printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
 chmod +x "$_STUBS"/*
 
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 
 # The 429 handler should show a special dialog offering to install local TTS,
 # not just the generic error dialog (which also happens to contain "quota" from
@@ -541,7 +541,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "HTTP 401 → exits 1 (normal error, not quota)" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"'
 
 check "HTTP 401 → dialog does NOT offer local TTS install" \
     "no" "$(grep -qi 'Install Local TTS' "$_LOG" 2>/dev/null && echo "yes" || echo "no")"
@@ -824,6 +824,244 @@ check "local backend: STATUS_FILE created" \
     "yes" "$([ -f "$_TESTTMP/speak11_status" ] && echo "yes" || echo "no")"
 
 rm -rf "$_STUBS" "$_TESTTMP"
+
+# ── 20. TTS_BACKEND=auto routing ─────────────────────────────────
+
+section "TTS_BACKEND=auto routing"
+
+# Verify default changed in speak.sh
+check "speak.sh default backend is auto" \
+    "yes" "$(grep -q 'TTS_BACKEND:-auto' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+_STUBS=$(mktemp -d)
+_MARKERS="$_STUBS/markers"
+mkdir -p "$_MARKERS"
+
+printf '#!/bin/bash\necho "fake-key"\n' > "$_STUBS/security"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/osascript"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
+cat > "$_STUBS/afinfo" << 'STUB'
+#!/bin/bash
+echo "estimated duration: 5.000000 sec"
+STUB
+
+# curl stub: mark called, return 200
+cat > "$_STUBS/curl" << STUB
+#!/bin/bash
+touch "$_MARKERS/curl_called"
+prev=""
+for a in "\$@"; do
+    if [ "\$prev" = "-o" ]; then printf "fakeaudio" > "\$a"; fi
+    prev="\$a"
+done
+printf "200"
+STUB
+
+# python3 stub: track mlx_audio calls
+cat > "$_STUBS/python3" << STUB
+#!/bin/bash
+for arg in "\$@"; do
+    if [ "\$arg" = "mlx_audio.tts.generate" ]; then
+        touch "$_MARKERS/mlx_called"
+        prev=""
+        for a in "\$@"; do
+            if [ "\$prev" = "--output_path" ]; then
+                mkdir -p "\$a"
+                printf "RIFF" > "\$a/speak11.wav"
+            fi
+            prev="\$a"
+        done
+        exit 0
+    fi
+done
+/usr/bin/python3 "\$@"
+STUB
+chmod +x "$_STUBS"/*
+
+# Test: auto + API key → ElevenLabs
+rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+check "auto + API key → curl called (ElevenLabs)" \
+    "yes" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
+check "auto + API key → mlx_audio NOT called" \
+    "no" "$([ -f "$_MARKERS/mlx_called" ] && echo "yes" || echo "no")"
+
+# Test: auto + no API key → local
+rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
+printf '#!/bin/bash\nexit 1\n' > "$_STUBS/security"
+chmod +x "$_STUBS/security"
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=auto ELEVENLABS_API_KEY="" bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+check "auto + no API key → curl NOT called" \
+    "no" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
+check "auto + no API key → mlx_audio called (local)" \
+    "yes" "$([ -f "$_MARKERS/mlx_called" ] && echo "yes" || echo "no")"
+
+# Test: auto + no API key → exits 0 (no error dialog)
+rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
+check_exit "auto + no API key → exits 0 (silent local)" 0 \
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=auto ELEVENLABS_API_KEY="" bash "'"$SPEAK_SH"'"'
+
+rm -rf "$_STUBS"
+
+# ── 21. TTS_BACKEND=auto fallback on failure ─────────────────────
+
+section "TTS_BACKEND=auto fallback on failure"
+
+_STUBS=$(mktemp -d)
+_MARKERS="$_STUBS/markers"
+_LOG="$_STUBS/osascript.log"
+mkdir -p "$_MARKERS"
+
+printf '#!/bin/bash\necho "fake-key"\n' > "$_STUBS/security"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
+cat > "$_STUBS/afinfo" << 'STUB'
+#!/bin/bash
+echo "estimated duration: 5.000000 sec"
+STUB
+cat > "$_STUBS/osascript" << STUB
+#!/bin/bash
+echo "\$*" >> "$_LOG"
+echo "OK"
+STUB
+
+# curl: simulate network failure
+printf '#!/bin/bash\nexit 7\n' > "$_STUBS/curl"
+
+# python3: handle mlx_audio for fallback
+cat > "$_STUBS/python3" << STUB
+#!/bin/bash
+for arg in "\$@"; do
+    if [ "\$arg" = "mlx_audio.tts.generate" ]; then
+        touch "$_MARKERS/mlx_fallback_called"
+        prev=""
+        for a in "\$@"; do
+            if [ "\$prev" = "--output_path" ]; then
+                mkdir -p "\$a"
+                printf "RIFF" > "\$a/speak11.wav"
+            fi
+            prev="\$a"
+        done
+        exit 0
+    fi
+done
+/usr/bin/python3 "\$@"
+STUB
+chmod +x "$_STUBS"/*
+
+rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
+check_exit "auto + network failure → exits 0 (falls back)" 0 \
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"'
+check "auto + network failure → local TTS called" \
+    "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
+check "auto + network failure → no dialog (silent)" \
+    "no" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
+
+# Test: auto + 429 → silent fallback
+rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
+cat > "$_STUBS/curl" << 'CURLSTUB'
+#!/bin/bash
+prev=""
+for a in "$@"; do
+    [ "$prev" = "-o" ] && printf '{"detail":"quota_exceeded"}' > "$a"
+    prev="$a"
+done
+printf "429"
+CURLSTUB
+chmod +x "$_STUBS/curl"
+
+check_exit "auto + 429 → exits 0 (falls back)" 0 \
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"'
+check "auto + 429 → local TTS called" \
+    "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
+
+rm -rf "$_STUBS"
+
+# ── 22. Auto-derive lang_code from voice ─────────────────────────
+
+section "Auto-derive lang_code from voice"
+
+# speak.sh should derive lang_code from the voice prefix, not use LOCAL_LANG
+check "speak.sh derives lang_code from LOCAL_VOICE" \
+    "yes" "$(grep -q 'LOCAL_VOICE:0:1' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Functional test: verify the derived lang_code is passed to mlx_audio
+_STUBS=$(mktemp -d)
+_TESTTMP=$(mktemp -d)
+printf '#!/bin/bash\nexit 1\n' > "$_STUBS/security"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/osascript"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
+cat > "$_STUBS/afinfo" << 'STUB'
+#!/bin/bash
+echo "estimated duration: 2.000000 sec"
+STUB
+
+# python3: capture the --lang_code argument
+cat > "$_STUBS/python3" << PYSTUB
+#!/bin/bash
+for arg in "\$@"; do
+    if [ "\$arg" = "mlx_audio.tts.generate" ]; then
+        # Capture lang_code
+        prev=""
+        for a in "\$@"; do
+            if [ "\$prev" = "--lang_code" ]; then
+                printf "%s" "\$a" > "$_TESTTMP/captured_lang"
+            fi
+            if [ "\$prev" = "--output_path" ]; then
+                mkdir -p "\$a"
+                printf "RIFF" > "\$a/speak11.wav"
+            fi
+            prev="\$a"
+        done
+        exit 0
+    fi
+done
+/usr/bin/python3 "\$@"
+PYSTUB
+chmod +x "$_STUBS"/*
+
+# Test with American voice → should derive lang_code "a"
+echo "test" | env PATH="$_STUBS:$PATH" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
+    bash "$SPEAK_SH" >/dev/null 2>&1 || true
+check "af_heart → lang_code 'a'" \
+    "a" "$(cat "$_TESTTMP/captured_lang" 2>/dev/null)"
+
+# Test with British voice → should derive lang_code "b"
+rm -f "$_TESTTMP/captured_lang"
+echo "test" | env PATH="$_STUBS:$PATH" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=bf_emma \
+    bash "$SPEAK_SH" >/dev/null 2>&1 || true
+check "bf_emma → lang_code 'b'" \
+    "b" "$(cat "$_TESTTMP/captured_lang" 2>/dev/null)"
+
+rm -rf "$_STUBS" "$_TESTTMP"
+
+# ── 23. Swift auto backend + credits structure ───────────────────
+
+section "Swift auto backend + credits structure"
+
+check "Swift: buildBackendItems includes Auto" \
+    "yes" "$(grep -q '"Auto"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Swift: backend item uses repr auto" \
+    "yes" "$(grep -q '"auto"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Swift: API Key condition uses ttsBackend auto" \
+    "yes" "$(grep -A5 'ttsBackend.*==.*"auto"' "$SETTINGS_SWIFT" | grep -q 'API Key\|apiItem\|api-key\|Credits' && echo "yes" || echo "no")"
+
+check "Swift: fetchCredits method exists" \
+    "yes" "$(grep -q 'func fetchCredits' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Swift: cachedCredits property exists" \
+    "yes" "$(grep -q 'cachedCredits' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Swift: pickLanguage removed" \
+    "yes" "$(! grep -q 'func pickLanguage' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# ── 24. install.command auto backend ─────────────────────────────
+
+section "install.command auto backend"
+
+check "install.command sets auto for Both choice" \
+    "yes" "$(grep -q '_CFG_BACKEND="auto"' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
 # ── Summary ──────────────────────────────────────────────────────
 
