@@ -2,12 +2,10 @@
 # speak.sh — Speak11 for macOS
 # Select text in any app, press your hotkey, hear it spoken.
 #
-# Supports two backends:
-#   - ElevenLabs (cloud API, requires API key)
-#   - Local (mlx-audio / Kokoro, runs on Apple Silicon)
-#
-# When both are installed and ElevenLabs fails (offline, quota exceeded),
-# the script falls back to local TTS automatically — no interruption.
+# Supports three backend modes:
+#   - elevenlabs  — cloud API (requires API key)
+#   - local       — mlx-audio / Kokoro (runs on Apple Silicon)
+#   - auto        — tries ElevenLabs first, falls back to local silently
 #
 # Requirements: afplay (built into macOS), curl (for ElevenLabs), python3
 
@@ -24,13 +22,13 @@ _CONFIG="$HOME/.config/speak11/config"
 [ -f "$_CONFIG" ] && source "$_CONFIG"
 
 # Priority: environment variable > config file > hardcoded default.
-TTS_BACKEND="${_ENV_TTS_BACKEND:-${TTS_BACKEND:-elevenlabs}}"
+TTS_BACKEND="${_ENV_TTS_BACKEND:-${TTS_BACKEND:-auto}}"
 TTS_BACKENDS_INSTALLED="${_ENV_TTS_BACKENDS_INSTALLED:-${TTS_BACKENDS_INSTALLED:-elevenlabs}}"
 LOCAL_VOICE="${_ENV_LOCAL_VOICE:-${LOCAL_VOICE:-af_heart}}"
 LOCAL_LANG="${_ENV_LOCAL_LANG:-${LOCAL_LANG:-a}}"
 
-# ElevenLabs settings (only loaded when needed)
-if [ "$TTS_BACKEND" = "elevenlabs" ]; then
+# ElevenLabs settings (loaded when needed — both "elevenlabs" and "auto" modes)
+if [ "$TTS_BACKEND" = "elevenlabs" ] || [ "$TTS_BACKEND" = "auto" ]; then
     ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-$(security find-generic-password -a "speak11" -s "speak11-api-key" -w 2>/dev/null)}"
     VOICE_ID="${ELEVENLABS_VOICE_ID:-${VOICE_ID:-pFZP5JQG7iQjIQuC4Bku}}"
     MODEL_ID="${ELEVENLABS_MODEL_ID:-${MODEL_ID:-eleven_flash_v2_5}}"
@@ -112,7 +110,7 @@ run_local_tts() {
         --text "$TEXT" \
         --voice "${LOCAL_VOICE:-af_heart}" \
         --speed "$SPEED" \
-        --lang_code "${LOCAL_LANG:-a}" \
+        --lang_code "${LOCAL_VOICE:0:1}" \
         --output_path "$TMP_DIR" \
         --file_prefix speak11 \
         --audio_format wav \
@@ -132,6 +130,15 @@ play_audio() {
     echo "$PLAY_PID" > "$PID_FILE"
     wait "$PLAY_PID"
 }
+
+# ── Auto-mode resolution ──────────────────────────────────────────
+if [ "$TTS_BACKEND" = "auto" ]; then
+    TTS_BACKENDS_INSTALLED="both"  # auto always enables fallback
+    if [ -z "$ELEVENLABS_API_KEY" ]; then
+        # No API key available — go straight to local TTS
+        TTS_BACKEND="local"
+    fi
+fi
 
 # ── Generate audio ───────────────────────────────────────────────
 

@@ -460,7 +460,7 @@ _CFG_BACKEND="elevenlabs"
 _CFG_INSTALLED="elevenlabs"
 case "$BACKEND_CHOICE" in
     "Local Only")  _CFG_BACKEND="local";      _CFG_INSTALLED="local" ;;
-    "Both")        _CFG_BACKEND="elevenlabs";  _CFG_INSTALLED="both" ;;
+    "Both")        _CFG_BACKEND="auto";        _CFG_INSTALLED="both" ;;
 esac
 cat > "$HOME/.config/speak11/config" << CFGEOF
 TTS_BACKEND="$_CFG_BACKEND"
@@ -473,7 +473,6 @@ STYLE="0.00"
 USE_SPEAKER_BOOST="true"
 SPEED="1.00"
 LOCAL_VOICE="af_heart"
-LOCAL_LANG="a"
 CFGEOF
 step "Default config created"
 
