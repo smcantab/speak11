@@ -67,4 +67,4 @@ step "Login item removed"
 printf '\n  \033[32mSpeak11 has been removed.\033[0m\n\n'
 
 # ── Done ──────────────────────────────────────────────────────────
-osascript -e 'display dialog "Speak11 has been removed.\n\nIf you assigned a Services keyboard shortcut, remove it manually:\nSystem Settings → Keyboard → Keyboard Shortcuts → Services" with title "Speak11" buttons {"Done"} default button "Done" with icon note' 2>/dev/null
+osascript -e 'display dialog "Speak11 has been removed.\n\nIf you assigned a Services keyboard shortcut, remove it manually:\nSystem Settings → Keyboard → Keyboard Shortcuts → Services\n\nIf you installed mlx-audio for local TTS, remove it with:\npip3 uninstall mlx-audio" with title "Speak11" buttons {"Done"} default button "Done" with icon note' 2>/dev/null
