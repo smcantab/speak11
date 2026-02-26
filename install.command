@@ -56,15 +56,28 @@ unspin() {
 osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
 
 # ── Welcome ───────────────────────────────────────────────────────
-result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Store your API key securely in Keychain\n  • Link the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n\nYou will need a free ElevenLabs API key.\nGet one at elevenlabs.io → Profile → API Keys" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null)
+result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Link the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS (mlx-audio) for offline use" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null)
 [ "$result" = "Quit" ] && exit 0
 
-# ── API Key ───────────────────────────────────────────────────────
-API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:" with title "Speak11" default answer "" with hidden answer buttons {"Cancel", "Install"} default button "Install")' 2>/dev/null)
+# ── Backend choice ───────────────────────────────────────────────
+# Local TTS (mlx-audio) only runs on Apple Silicon.
+BACKEND_CHOICE="elevenlabs"
+IS_ARM64=false
+[ "$(uname -m)" = "arm64" ] && IS_ARM64=true
 
-if [ -z "$API_KEY" ]; then
-    osascript -e 'display dialog "No API key entered. Installation cancelled." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
-    exit 1
+if $IS_ARM64; then
+    BACKEND_CHOICE=$(osascript -e 'button returned of (display dialog "Choose your TTS backend:\n\n  • ElevenLabs Only — cloud API, uses your API key\n  • Both — cloud + local fallback (no credits needed offline)\n  • Local Only — free, runs entirely on your Mac (Apple Silicon)" with title "Speak11" buttons {"ElevenLabs Only", "Both", "Local Only"} default button "Both" with icon note)' 2>/dev/null)
+fi
+
+# ── API Key (skip if Local Only) ─────────────────────────────────
+API_KEY=""
+if [ "$BACKEND_CHOICE" != "Local Only" ]; then
+    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:" with title "Speak11" default answer "" with hidden answer buttons {"Cancel", "Install"} default button "Install")' 2>/dev/null)
+
+    if [ -z "$API_KEY" ]; then
+        osascript -e 'display dialog "No API key entered. Installation cancelled." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+        exit 1
+    fi
 fi
 
 # ── Settings app choice (ask before work begins) ─────────────────
@@ -78,13 +91,31 @@ end tell' 2>/dev/null || true
 
 header
 
-# ── Store key in Keychain ─────────────────────────────────────────
-security add-generic-password \
-    -a "speak11" \
-    -s "speak11-api-key" \
-    -w "$API_KEY" \
-    -U 2>/dev/null
-step "API key stored in Keychain"
+# ── Store key in Keychain (skip for Local Only) ──────────────────
+if [ -n "$API_KEY" ]; then
+    security add-generic-password \
+        -a "speak11" \
+        -s "speak11-api-key" \
+        -w "$API_KEY" \
+        -U 2>/dev/null
+    step "API key stored in Keychain"
+fi
+
+# ── Install mlx-audio (if Both or Local Only) ───────────────────
+if [ "$BACKEND_CHOICE" = "Both" ] || [ "$BACKEND_CHOICE" = "Local Only" ]; then
+    spin "Installing mlx-audio and downloading Kokoro model…"
+    set +e
+    bash "$SCRIPT_DIR/install-local.sh" >/dev/null 2>&1
+    mlx_ok=$?
+    set -e
+    unspin
+    if [ $mlx_ok -eq 0 ]; then
+        step "mlx-audio installed"
+    else
+        printf '  \033[31m✗\033[0m  mlx-audio installation failed\n'
+        osascript -e 'display dialog "Could not install mlx-audio.\n\nMake sure python3 and pip3 are available:\n  xcode-select --install\n\nYou can install it manually later:\n  pip3 install mlx-audio" with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+    fi
+fi
 
 # ── Install speak.sh ──────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR"
@@ -409,14 +440,6 @@ SWIFT_END
         codesign --force --sign - "$APP_BUNDLE" 2>/dev/null || true
         step "App signed"
 
-        # Default config
-        mkdir -p "$HOME/.config/speak11"
-        if [ ! -f "$HOME/.config/speak11/config" ]; then
-            printf 'VOICE_ID="pFZP5JQG7iQjIQuC4Bku"\nMODEL_ID="eleven_flash_v2_5"\nSTABILITY="0.50"\nSIMILARITY_BOOST="0.75"\nSTYLE="0.00"\nUSE_SPEAKER_BOOST="true"\nSPEED="1.00"\n' \
-                > "$HOME/.config/speak11/config"
-        fi
-        step "Default config created"
-
         printf '\n  \033[32mInstallation complete.\033[0m\n\n'
 
         # Offer login item
@@ -429,9 +452,38 @@ SWIFT_END
     fi
 fi
 
+# ── Write config (unconditional — needed regardless of settings app) ─
+# install-local.sh may have created a partial config earlier;
+# this ensures correct values for the chosen backend.
+mkdir -p "$HOME/.config/speak11"
+_CFG_BACKEND="elevenlabs"
+_CFG_INSTALLED="elevenlabs"
+case "$BACKEND_CHOICE" in
+    "Local Only")  _CFG_BACKEND="local";      _CFG_INSTALLED="local" ;;
+    "Both")        _CFG_BACKEND="elevenlabs";  _CFG_INSTALLED="both" ;;
+esac
+cat > "$HOME/.config/speak11/config" << CFGEOF
+TTS_BACKEND="$_CFG_BACKEND"
+TTS_BACKENDS_INSTALLED="$_CFG_INSTALLED"
+VOICE_ID="pFZP5JQG7iQjIQuC4Bku"
+MODEL_ID="eleven_flash_v2_5"
+STABILITY="0.50"
+SIMILARITY_BOOST="0.75"
+STYLE="0.00"
+USE_SPEAKER_BOOST="true"
+SPEED="1.00"
+LOCAL_VOICE="af_heart"
+LOCAL_LANG="a"
+CFGEOF
+step "Default config created"
+
 # ── Done ──────────────────────────────────────────────────────────
 if [ "${settings_result:-}" = "Install" ] && [ "${compile_ok:-1}" -eq 0 ]; then
-    osascript -e 'display dialog "Speak11 is installed!\n\n⌥⇧/ (Option + Shift + /) speaks your selection anywhere — including Electron apps like Beeper, Slack, and VS Code.\n\nThe ⊶ icon in your menu bar lets you change voice, model, and speed.\n\nFirst use: open the menu bar icon and grant Accessibility access when prompted." with title "Speak11" buttons {"Done"} default button "Done" with icon note' 2>/dev/null
+    _DONE_MSG="Speak11 is installed!\n\n⌥⇧/ (Option + Shift + /) speaks your selection anywhere — including Electron apps like Beeper, Slack, and VS Code.\n\nThe ⊶ icon in your menu bar lets you change voice, model, and speed.\n\nFirst use: open the menu bar icon and grant Accessibility access when prompted."
+    if ([ "$BACKEND_CHOICE" = "Both" ] || [ "$BACKEND_CHOICE" = "Local Only" ]) && [ "${mlx_ok:-1}" -eq 0 ]; then
+        _DONE_MSG="$_DONE_MSG\n\nLocal TTS is ready — the Kokoro voice model has been downloaded."
+    fi
+    osascript -e "display dialog \"$_DONE_MSG\" with title \"Speak11\" buttons {\"Done\"} default button \"Done\" with icon note" 2>/dev/null
 else
     printf '\n  \033[32mInstallation complete.\033[0m\n\n'
     result=$(osascript -e 'button returned of (display dialog "Speak11 is installed!\n\nOne last step: assign a keyboard shortcut.\n\n1. System Settings will open\n2. Go to Keyboard Shortcuts → Services → Text\n3. Find \"Speak Selection\" and double-click to assign a shortcut\n\nSuggested: ⌃⌥S (Control+Option+S)" with title "Speak11" buttons {"Done", "Open System Settings"} default button "Open System Settings" with icon note)' 2>/dev/null)

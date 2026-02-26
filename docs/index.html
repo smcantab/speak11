@@ -4,15 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Speak11 - Text-to-Speech for macOS</title>
-  <meta name="description" content="Select text in any app, press Option+Shift+/, hear it read aloud. A macOS menu bar app that uses ElevenLabs for text-to-speech.">
-  <meta name="keywords" content="text to speech, macOS, TTS, ElevenLabs, menu bar app, read aloud, accessibility, speak selected text">
+  <meta name="description" content="Select text in any app, press Option+Shift+/, hear it read aloud. A macOS menu bar app with ElevenLabs cloud and local Kokoro TTS.">
+  <meta name="keywords" content="text to speech, macOS, TTS, ElevenLabs, Kokoro, mlx-audio, menu bar app, read aloud, accessibility, speak selected text, offline TTS, Apple Silicon">
   <meta name="author" content="Stefano Martiniani">
 
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='28' fill='%232678F5'/%3E%3Cg transform='translate(64,64)' stroke='white' stroke-width='5' stroke-linecap='round' fill='none'%3E%3Cline x1='0' y1='-18' x2='0' y2='18'/%3E%3Cline x1='-12' y1='-12' x2='-12' y2='12'/%3E%3Cline x1='12' y1='-12' x2='12' y2='12'/%3E%3Cline x1='-24' y1='-24' x2='-24' y2='24'/%3E%3Cline x1='24' y1='-24' x2='24' y2='24'/%3E%3Cline x1='-36' y1='-10' x2='-36' y2='10'/%3E%3Cline x1='36' y1='-10' x2='36' y2='10'/%3E%3C/g%3E%3C/svg%3E">
 
   <!-- Open Graph -->
   <meta property="og:title" content="Speak11 - Text-to-Speech for macOS">
-  <meta property="og:description" content="Select text in any app, press Option+Shift+/, hear it read aloud. Uses ElevenLabs for text-to-speech.">
+  <meta property="og:description" content="Select text in any app, press Option+Shift+/, hear it read aloud. Cloud or local TTS for macOS.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://smcantab.github.io/speak11/">
   <meta property="og:image" content="https://smcantab.github.io/speak11/social-card.png">
@@ -22,7 +22,7 @@
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Speak11 - Text-to-Speech for macOS">
-  <meta name="twitter:description" content="Select text in any app, press Option+Shift+/, hear it read aloud. Uses ElevenLabs for text-to-speech.">
+  <meta name="twitter:description" content="Select text in any app, press Option+Shift+/, hear it read aloud. Cloud or local TTS for macOS.">
   <meta name="twitter:image" content="https://smcantab.github.io/speak11/social-card.png">
 
   <style>
@@ -193,13 +193,13 @@
       <h1>Speak11</h1>
       <p class="tagline">
         Select text in any app, press <span class="hotkey">&#x2325;&#x21E7;/</span>, hear it read aloud.<br>
-        Uses <a href="https://elevenlabs.io">ElevenLabs</a> for text-to-speech. Runs in your menu bar.
+        Cloud TTS via <a href="https://elevenlabs.io">ElevenLabs</a>, or local TTS via <a href="https://github.com/Blaizzy/mlx-audio">Kokoro</a>. Runs in your menu bar.
       </p>
       <div class="buttons">
         <a href="https://github.com/smcantab/speak11/archive/refs/heads/main.zip" class="cta">Download</a>
         <a href="https://github.com/smcantab/speak11" class="secondary">View on GitHub</a>
       </div>
-      <p class="prereq">Requires macOS 13+ and a free <a href="https://elevenlabs.io">ElevenLabs</a> API key</p>
+      <p class="prereq">Requires macOS 13+. ElevenLabs needs an API key. Local TTS needs Apple Silicon.</p>
     </div>
   </section>
 
@@ -220,7 +220,7 @@
         <path d="M16 4v24M10 8v16M22 8v16M4 12v8M28 12v8" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
       </svg>
       <h3>Pick a voice</h3>
-      <p>Seven voices built in, or paste any voice ID from the ElevenLabs Voice Library.</p>
+      <p>ElevenLabs voices or 12 Kokoro voices built in. Paste any ElevenLabs voice ID for more.</p>
     </div>
     <div class="feature">
       <svg class="feature-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -241,6 +241,22 @@
       </svg>
       <h3>No dependencies</h3>
       <p>Uses curl and afplay, which already ship with macOS. Double-click the installer and you're set.</p>
+    </div>
+    <div class="feature">
+      <svg class="feature-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="12" stroke="#1d1d1f" stroke-width="1.5" fill="none"/>
+        <path d="M10 16h4l2-5 4 10 2-5h4" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      <h3>Works offline</h3>
+      <p>Local TTS via Kokoro runs entirely on your Mac. No internet, no credits, no limits. Apple Silicon only.</p>
+    </div>
+    <div class="feature">
+      <svg class="feature-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M8 10h6v12H8zM18 10h6v12h-6z" stroke="#1d1d1f" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M14 16h4" stroke="#1d1d1f" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <h3>Choose your engine</h3>
+      <p>ElevenLabs for cloud quality, Kokoro for offline freedom. Install both and switch from the menu bar.</p>
     </div>
     <div class="feature">
       <svg class="feature-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">

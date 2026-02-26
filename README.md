@@ -6,7 +6,7 @@
 
 <p align="center">
   Select text in any app, press <kbd>⌥</kbd><kbd>⇧</kbd><kbd>/</kbd>, hear it read aloud.<br>
-  Uses the <a href="https://elevenlabs.io">ElevenLabs</a> text-to-speech API. Requires a free API key.
+  Uses <a href="https://elevenlabs.io">ElevenLabs</a> (cloud) or <a href="https://github.com/Blaizzy/mlx-audio">mlx-audio / Kokoro</a> (local, Apple Silicon) for text-to-speech.
 </p>
 
 <p align="center">
@@ -19,17 +19,24 @@
 ## Requirements
 
 - macOS Ventura (13) or later
-- A free [ElevenLabs account](https://elevenlabs.io) and API key
 - `curl` and `afplay` — both ship with macOS, nothing to install
+- **ElevenLabs mode:** a free [ElevenLabs account](https://elevenlabs.io) and API key
+- **Local mode:** Apple Silicon (M1 or later) and python3
 
 ## Installation
 
 1. [Download the repository](../../archive/refs/heads/main.zip) and unzip it
 2. Double-click **`install.command`**
-3. Click **Continue**, paste your ElevenLabs API key, click **Install**
-4. Click **Install** when prompted about the settings app — this adds the menu bar icon and registers `⌥⇧/` as a global hotkey
+3. Click **Continue**, then choose your TTS backend:
+   - **ElevenLabs Only** — cloud API, needs an API key
+   - **Both** — cloud + local fallback (recommended on Apple Silicon)
+   - **Local Only** — free, offline, no API key needed (Apple Silicon only)
+4. If you chose ElevenLabs or Both, paste your API key
+5. Click **Install** when prompted about the settings app — this adds the menu bar icon and registers `⌥⇧/` as a global hotkey
 
 > **Getting your API key:** sign in at [elevenlabs.io](https://elevenlabs.io) → click your profile icon → **Profile + API Key** → copy the key.
+
+> **Local TTS note:** the Kokoro voice model (~350 MB) is downloaded during installation. If you chose ElevenLabs Only and later install local TTS via the quota prompt, the model downloads at that time.
 
 ### First use
 
@@ -44,7 +51,11 @@ Your API key is stored in your macOS Keychain — never written to a file.
 
 ## Settings
 
-Click the **waveform icon** in the menu bar to change:
+Click the **waveform icon** in the menu bar. The menu adapts to the active backend — you only see settings that apply.
+
+When both backends are installed, **Backend** appears at the top of the menu to switch between them.
+
+### ElevenLabs settings
 
 | Setting | Options |
 |---------|---------|
@@ -56,9 +67,17 @@ Click the **waveform icon** in the menu bar to change:
 | **Style** | 0.0 (none) to 1.0 (max) — amplifies the voice's characteristic delivery; adds latency |
 | **Speaker Boost** | On / Off — subtle enhancement to voice similarity |
 
+### Local (Kokoro) settings
+
+| Setting | Options |
+|---------|---------|
+| **Voice** | 12 curated English voices |
+| **Speed** | 0.5× to 2× |
+| **Language** | American English · British English · Spanish · French · Italian |
+
 Settings take effect immediately — no restart needed.
 
-### Built-in voices
+### ElevenLabs voices
 
 | Name | Style |
 |------|-------|
@@ -72,6 +91,23 @@ Settings take effect immediately — no restart needed.
 
 You can also enter any voice ID from the [ElevenLabs Voice Library](https://elevenlabs.io/voice-library) via **Voice → Custom voice ID…** in the menu.
 
+### Kokoro voices
+
+| Name | Style |
+|------|-------|
+| Heart | Warm (default) |
+| Bella | Soft |
+| Nova | Confident |
+| Sarah | Gentle |
+| Sky | Bright |
+| Adam | Deep |
+| Echo | Clear |
+| Eric | Steady |
+| Michael | Warm |
+| Emma | British, warm |
+| Lily | British, bright |
+| George | British, deep |
+
 ## Uninstall
 
 Double-click **`uninstall.command`** — it removes everything including the Accessibility permission, login item, API key, and app bundle.
@@ -83,12 +119,14 @@ Double-click **`uninstall.command`** — it removes everything including the Acc
 | `⌥⇧/` does nothing | Grant Accessibility permission when prompted, or check System Settings → Privacy & Security → Accessibility |
 | Waveform icon not in menu bar | Open `~/Applications/Speak11 Settings.app` manually, or re-run `install.command` |
 | HTTP 401 | API key is wrong or expired — run `install.command` again |
-| HTTP 429 | Monthly character quota exceeded — check usage at [elevenlabs.io](https://elevenlabs.io) |
+| HTTP 429 | Monthly character quota exceeded — on Apple Silicon, the app will offer to install local TTS as a free alternative |
 | "python3 not found" | Run `xcode-select --install` in Terminal |
 
 ## Cost
 
-ElevenLabs' free tier includes a monthly character allowance — usually sufficient for casual read-aloud use. Paid plans start at $5/month. See [elevenlabs.io/pricing](https://elevenlabs.io/pricing).
+**ElevenLabs:** the free tier includes a monthly character allowance — usually sufficient for casual read-aloud use. Paid plans start at $5/month. See [elevenlabs.io/pricing](https://elevenlabs.io/pricing).
+
+**Local (Kokoro):** completely free. Runs on your Mac with no API calls or credits. Requires Apple Silicon and a one-time ~350 MB model download.
 
 ## License
 
@@ -104,6 +142,8 @@ ElevenLabs' free tier includes a monthly character allowance — usually suffici
 Settings are saved to `~/.config/speak11/config`. You can edit this file directly:
 
 ```bash
+TTS_BACKEND="elevenlabs"
+TTS_BACKENDS_INSTALLED="both"
 VOICE_ID="pFZP5JQG7iQjIQuC4Bku"
 MODEL_ID="eleven_flash_v2_5"
 STABILITY="0.50"
@@ -111,6 +151,8 @@ SIMILARITY_BOOST="0.75"
 STYLE="0.00"
 USE_SPEAKER_BOOST="true"
 SPEED="1.00"
+LOCAL_VOICE="af_heart"
+LOCAL_LANG="a"
 ```
 
 ### Environment variables
@@ -121,6 +163,9 @@ Environment variables take highest priority and override both the config file an
 export ELEVENLABS_API_KEY="your-api-key"       # overrides Keychain
 export ELEVENLABS_VOICE_ID="your-voice-id"
 export ELEVENLABS_MODEL_ID="eleven_multilingual_v2"
+export TTS_BACKEND="local"                     # "elevenlabs" or "local"
+export LOCAL_VOICE="am_adam"                   # Kokoro voice ID
+export LOCAL_LANG="b"                          # language code (a, b, e, f, i)
 ```
 
 ### Voice IDs
