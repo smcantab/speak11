@@ -397,6 +397,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         speakLock.lock()
         speakGeneration += 1
         let process = currentSpeakProcess
+        currentSpeakProcess = nil  // prevent duplicate kill attempts
         speakLock.unlock()
 
         guard let process = process, process.isRunning else { return }
