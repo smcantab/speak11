@@ -263,9 +263,9 @@ section "install.command syntax + structure"
 check "bash syntax valid" "0" "$(bash -n "$SCRIPT_DIR/install.command" 2>/dev/null; echo $?)"
 
 # Bug A: Config write must be unconditional (not nested inside settings app block).
-# Verify _CFG_BACKEND= appears at column 0 (no leading spaces = top-level code).
+# The case statement assigning _CFG_BACKEND must be at column 0 (top-level code).
 check "config write is not nested inside settings if block" \
-    "yes" "$(grep -m1 '_CFG_BACKEND=' "$SCRIPT_DIR/install.command" | grep -q '^[^ ]' && echo "yes" || echo "no")"
+    "yes" "$(grep -m1 '^case.*BACKEND_CHOICE' "$SCRIPT_DIR/install.command" >/dev/null && echo "yes" || echo "no")"
 
 # Bug B: Done dialog must condition the "model downloaded" message on mlx_ok.
 # Check that mlx_ok appears within 3 lines before the "Kokoro voice model" line.
@@ -1003,6 +1003,9 @@ check "Swift: API Key condition uses ttsBackend auto" \
 check "Swift: fetchCredits method exists" \
     "yes" "$(grep -q 'func fetchCredits' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
+check "Swift: fetchCredits fires for both auto and elevenlabs" \
+    "yes" "$(grep -A2 'func fetchCredits' "$SETTINGS_SWIFT" | grep -q '"elevenlabs"' && echo "yes" || echo "no")"
+
 check "Swift: cachedCredits property exists" \
     "yes" "$(grep -q 'cachedCredits' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
@@ -1139,12 +1142,21 @@ _LOCKED_WRITES=$(awk '
 check "isSpeakingFlag: total runtime writes == locked writes ($_TOTAL_WRITES)" \
     "$_TOTAL_WRITES" "$_LOCKED_WRITES"
 
-# ── 25. install.command auto backend ─────────────────────────────
+# ── 25. install.command backend choice ────────────────────────────
 
-section "install.command auto backend"
+section "install.command backend choice"
 
-check "install.command always sets backend to auto" \
+check "install.command has 3-way backend choice dialog" \
+    "yes" "$(grep -q 'ElevenLabs Only.*Both.*Local Only' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "install.command maps ElevenLabs Only to elevenlabs backend" \
+    "yes" "$(grep -q '_CFG_BACKEND="elevenlabs"' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "install.command maps Both to auto backend" \
     "yes" "$(grep -q '_CFG_BACKEND="auto"' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "install.command maps Local Only to local backend" \
+    "yes" "$(grep -q '_CFG_BACKEND="local"' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
 # ── 26. Backend submenu always visible ───────────────────────────
 

@@ -56,18 +56,27 @@ unspin() {
 osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
 
 # ── Welcome ───────────────────────────────────────────────────────
-result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Link the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Install local TTS for free offline use (Apple Silicon)" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null)
+result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Link the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS for free offline use (Apple Silicon)" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null)
 [ "$result" = "Quit" ] && exit 0
 
 # ── Architecture detection ───────────────────────────────────────
 IS_ARM64=false
 [ "$(uname -m)" = "arm64" ] && IS_ARM64=true
 
+# ── Backend choice ───────────────────────────────────────────────
+BACKEND_CHOICE="ElevenLabs Only"
+if $IS_ARM64; then
+    BACKEND_CHOICE=$(osascript -e 'button returned of (display dialog "Choose your TTS backend:" & return & return & "• ElevenLabs Only — cloud API" & return & "• Both — ElevenLabs + local fallback" & return & "• Local Only — free, runs on your Mac" with title "Speak11" buttons {"ElevenLabs Only", "Both", "Local Only"} default button "Both" with icon note)' 2>/dev/null)
+fi
+
 # ── API Key ──────────────────────────────────────────────────────
 API_KEY=""
-if $IS_ARM64; then
-    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:\n\nSkip to use free local TTS only." with title "Speak11" default answer "" with hidden answer buttons {"Skip", "Install"} default button "Install")' 2>/dev/null || true)
+if [ "$BACKEND_CHOICE" = "Local Only" ]; then
+    : # no API key needed
+elif [ "$BACKEND_CHOICE" = "Both" ]; then
+    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:\n\nSkip to use local TTS only when ElevenLabs is unavailable." with title "Speak11" default answer "" with hidden answer buttons {"Skip", "Install"} default button "Install")' 2>/dev/null || true)
 else
+    # ElevenLabs Only (or Intel — same thing)
     API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:" with title "Speak11" default answer "" with hidden answer buttons {"Cancel", "Install"} default button "Install")' 2>/dev/null)
     if [ -z "$API_KEY" ]; then
         osascript -e 'display dialog "No API key entered. Installation cancelled." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
@@ -96,8 +105,8 @@ if [ -n "$API_KEY" ]; then
     step "API key stored in Keychain"
 fi
 
-# ── Install mlx-audio (Apple Silicon only) ───────────────────────
-if $IS_ARM64; then
+# ── Install mlx-audio (Both or Local Only on Apple Silicon) ──────
+if $IS_ARM64 && [ "$BACKEND_CHOICE" != "ElevenLabs Only" ]; then
     spin "Installing mlx-audio and downloading Kokoro model…"
     set +e
     bash "$SCRIPT_DIR/install-local.sh" >/dev/null 2>&1
@@ -452,17 +461,28 @@ fi
 # install-local.sh may have created a partial config earlier;
 # this ensures correct values for the chosen backend.
 mkdir -p "$HOME/.config/speak11"
-_CFG_BACKEND="auto"
-_CFG_INSTALLED="elevenlabs"
-if $IS_ARM64 && [ "${mlx_ok:-1}" -eq 0 ]; then
-    if [ -n "$API_KEY" ]; then
-        _CFG_INSTALLED="both"
-    else
-        _CFG_INSTALLED="local"
-    fi
-elif [ -z "$API_KEY" ]; then
-    _CFG_INSTALLED="local"
-fi
+case "$BACKEND_CHOICE" in
+    "ElevenLabs Only")
+        _CFG_BACKEND="elevenlabs"
+        _CFG_INSTALLED="elevenlabs"
+        ;;
+    "Both")
+        _CFG_BACKEND="auto"
+        if [ "${mlx_ok:-1}" -eq 0 ]; then
+            _CFG_INSTALLED="both"
+        else
+            _CFG_INSTALLED="elevenlabs"
+        fi
+        ;;
+    "Local Only")
+        _CFG_BACKEND="local"
+        if [ "${mlx_ok:-1}" -eq 0 ]; then
+            _CFG_INSTALLED="local"
+        else
+            _CFG_INSTALLED="elevenlabs"  # fallback — local install failed
+        fi
+        ;;
+esac
 cat > "$HOME/.config/speak11/config" << CFGEOF
 TTS_BACKEND="$_CFG_BACKEND"
 TTS_BACKENDS_INSTALLED="$_CFG_INSTALLED"
