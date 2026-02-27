@@ -15,7 +15,6 @@
 _ENV_TTS_BACKEND="${TTS_BACKEND:-}"
 _ENV_TTS_BACKENDS_INSTALLED="${TTS_BACKENDS_INSTALLED:-}"
 _ENV_LOCAL_VOICE="${LOCAL_VOICE:-}"
-_ENV_LOCAL_LANG="${LOCAL_LANG:-}"
 
 # Load settings written by the menu bar settings app.
 _CONFIG="$HOME/.config/speak11/config"
@@ -24,8 +23,7 @@ _CONFIG="$HOME/.config/speak11/config"
 # Priority: environment variable > config file > hardcoded default.
 TTS_BACKEND="${_ENV_TTS_BACKEND:-${TTS_BACKEND:-auto}}"
 TTS_BACKENDS_INSTALLED="${_ENV_TTS_BACKENDS_INSTALLED:-${TTS_BACKENDS_INSTALLED:-elevenlabs}}"
-LOCAL_VOICE="${_ENV_LOCAL_VOICE:-${LOCAL_VOICE:-af_heart}}"
-LOCAL_LANG="${_ENV_LOCAL_LANG:-${LOCAL_LANG:-a}}"
+LOCAL_VOICE="${_ENV_LOCAL_VOICE:-${LOCAL_VOICE:-bf_lily}}"
 
 # ElevenLabs settings (loaded when needed — both "elevenlabs" and "auto" modes)
 if [ "$TTS_BACKEND" = "elevenlabs" ] || [ "$TTS_BACKEND" = "auto" ]; then
@@ -39,6 +37,7 @@ if [ "$TTS_BACKEND" = "elevenlabs" ] || [ "$TTS_BACKEND" = "auto" ]; then
 fi
 
 SPEED="${SPEED:-1.0}"
+LOCAL_SPEED="${LOCAL_SPEED:-1.0}"
 
 # ── Toggle: stop playback if already running ───────────────────────
 PID_FILE="${TMPDIR:-/tmp}/speak11_tts.pid"
@@ -102,19 +101,132 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── Local TTS helper ────────────────────────────────────────────
 # Generates audio using mlx-audio / Kokoro. Sets TMP_FILE on success.
 # Returns 0 on success, 1 on failure.
+#
+# Uses a persistent TTS daemon (tts_server.py) that keeps the model in
+# memory for near-instant response.  Falls back to direct invocation if
+# the daemon is unavailable.
+VENV_PYTHON="${VENV_PYTHON:-$HOME/.local/share/speak11/venv/bin/python3}"
+
+LOG_FILE="$HOME/.local/share/speak11/tts.log"
+TTS_SOCK="${TTS_SOCK:-$HOME/.local/share/speak11/tts.sock}"
+
+# Start the TTS daemon if not already running.
+# The daemon uses flock internally — if another daemon is already running,
+# the new process exits immediately (code 0) and we wait for the existing
+# daemon's socket instead.
+start_tts_daemon() {
+    local PY="$1"
+    "$PY" "$SCRIPT_DIR/tts_server.py" </dev/null >> "$LOG_FILE" 2>&1 &
+    local daemon_pid=$!
+    # Wait for socket to appear (model loading can take 5-30s)
+    local i=0
+    while [ $i -lt 60 ]; do
+        [ -S "$TTS_SOCK" ] && return 0
+        if ! kill -0 "$daemon_pid" 2>/dev/null; then
+            # Our daemon exited.  Two possibilities:
+            #  a) Lock conflict — another daemon is running (exit 0).
+            #     Its socket may not exist yet (still loading model).
+            #  b) Real error (exit non-zero) — no daemon available.
+            wait "$daemon_pid" 2>/dev/null
+            local daemon_exit=$?
+            if [ "$daemon_exit" -eq 0 ]; then
+                # Lock conflict: wait for the other daemon's socket.
+                while [ $i -lt 60 ]; do
+                    [ -S "$TTS_SOCK" ] && return 0
+                    sleep 0.5
+                    i=$((i + 1))
+                done
+            fi
+            return 1
+        fi
+        sleep 0.5
+        i=$((i + 1))
+    done
+    return 1  # timed out
+}
+
+# Send a TTS request to the daemon.  Prints audio file path on stdout.
+tts_daemon_request() {
+    local PY="$1"
+    printf '%s' "$TEXT" | "$PY" -c "
+import json, socket, sys, os
+text = sys.stdin.read()
+req = json.dumps({
+    'text': text,
+    'voice': os.environ.get('_VOICE', 'bf_lily'),
+    'speed': os.environ.get('_SPEED', '1.00'),
+    'lang_code': os.environ.get('_LANG', 'b'),
+})
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.settimeout(120)
+sock.connect(os.environ['_SOCK'])
+sock.sendall((req + '\n').encode())
+data = b''
+while True:
+    chunk = sock.recv(4096)
+    if not chunk:
+        break
+    data += chunk
+    if b'\n' in data:
+        break
+sock.close()
+resp = json.loads(data.decode().strip())
+if resp.get('status') == 'ok':
+    print(resp['audio_file'])
+else:
+    print(resp.get('message', 'daemon error'), file=sys.stderr)
+    sys.exit(1)
+"
+}
+
 run_local_tts() {
     rm -f "$TMP_FILE"  # clean up ElevenLabs temp file if falling back
+    local PY="${VENV_PYTHON}"
+    [ -x "$PY" ] || PY=python3  # fallback to system python
+    {
+        printf "\n[%s] run_local_tts\n" "$(date '+%Y-%m-%d %H:%M:%S')"
+        echo "PY=$PY  VOICE=${LOCAL_VOICE:-bf_lily}  SPEED=$LOCAL_SPEED"
+    } >> "$LOG_FILE" 2>/dev/null
+
+    # Try the persistent daemon (model stays loaded → near-instant)
+    local audio_file=""
+
+    # Attempt 1: connect to existing daemon
+    if [ -S "$TTS_SOCK" ]; then
+        audio_file=$(_SOCK="$TTS_SOCK" _VOICE="${LOCAL_VOICE:-bf_lily}" \
+            _SPEED="$LOCAL_SPEED" _LANG="${LOCAL_VOICE:0:1}" \
+            tts_daemon_request "$PY" 2>> "$LOG_FILE") || true
+    fi
+
+    # Attempt 2: start daemon and retry
+    if [ -z "$audio_file" ] || [ ! -s "$audio_file" ]; then
+        if start_tts_daemon "$PY" 2>> "$LOG_FILE"; then
+            audio_file=$(_SOCK="$TTS_SOCK" _VOICE="${LOCAL_VOICE:-bf_lily}" \
+                _SPEED="$LOCAL_SPEED" _LANG="${LOCAL_VOICE:0:1}" \
+                tts_daemon_request "$PY" 2>> "$LOG_FILE") || true
+        fi
+    fi
+
+    # Success via daemon
+    if [ -n "$audio_file" ] && [ -s "$audio_file" ]; then
+        TMP_FILE="$audio_file"
+        TMP_DIR="$(dirname "$audio_file")"
+        echo "daemon: $audio_file" >> "$LOG_FILE" 2>/dev/null
+        return 0
+    fi
+
+    # Fallback: direct invocation (cold start, slow but reliable)
+    echo "daemon unavailable, falling back to direct invocation" >> "$LOG_FILE" 2>/dev/null
     TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp/}speak11_tts_XXXXXXXXXX")
-    python3 -m mlx_audio.tts.generate \
+    (cd "$TMP_DIR" && "$PY" -m mlx_audio.tts.generate \
         --model mlx-community/Kokoro-82M-bf16 \
         --text "$TEXT" \
-        --voice "${LOCAL_VOICE:-af_heart}" \
-        --speed "$SPEED" \
+        --voice "${LOCAL_VOICE:-bf_lily}" \
+        --speed "$LOCAL_SPEED" \
         --lang_code "${LOCAL_VOICE:0:1}" \
-        --output_path "$TMP_DIR" \
         --file_prefix speak11 \
         --audio_format wav \
-        --join_audio 2>/dev/null
+        --join_audio 2>> "$LOG_FILE")
     TMP_FILE="$TMP_DIR/speak11.wav"
     [ -s "$TMP_FILE" ]
 }
@@ -145,7 +257,7 @@ fi
 if [ "$TTS_BACKEND" = "local" ]; then
     # ── Local TTS (mlx-audio / Kokoro) ───────────────────────────
     if ! run_local_tts; then
-        osascript -e 'display dialog "Local TTS generation failed." & return & return & "Make sure mlx-audio is installed: pip3 install mlx-audio" with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+        osascript -e 'display dialog "Local TTS generation failed." & return & return & "Re-run the Speak11 installer to repair the local TTS setup." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
         exit 1
     fi
 else
@@ -211,7 +323,7 @@ else
                 exit 0
             fi
             # Local fallback also failed
-            osascript -e 'display dialog "ElevenLabs quota exceeded, and local TTS also failed." & return & return & "Make sure mlx-audio is installed: pip3 install mlx-audio" with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+            osascript -e 'display dialog "ElevenLabs quota exceeded, and local TTS also failed." & return & return & "Re-run the Speak11 installer to repair the local TTS setup." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
             exit 1
         fi
         # ElevenLabs only — offer to install local TTS
@@ -219,12 +331,12 @@ else
             QUOTA_RESULT=$(osascript -e 'button returned of (display dialog "You'\''ve hit your ElevenLabs quota." & return & return & "Install mlx-audio for free local TTS, or upgrade your ElevenLabs plan." with title "Speak11" buttons {"Not Now", "Install Local TTS"} default button "Install Local TTS" with icon caution)' 2>/dev/null || true)
             if [ "$QUOTA_RESULT" = "Install Local TTS" ]; then
                 if bash "$SCRIPT_DIR/install-local.sh" 2>/dev/null; then
-                    osascript -e 'display dialog "Local TTS installed and ready." & return & return & "Your backend has been switched to local." with title "Speak11" buttons {"OK"} default button "OK"' 2>/dev/null
+                    osascript -e 'display dialog "Local TTS installed and ready." & return & return & "Future requests will fall back to local when ElevenLabs is unavailable." with title "Speak11" buttons {"OK"} default button "OK"' 2>/dev/null
                     if run_local_tts; then
                         play_audio
                     fi
                 else
-                    osascript -e 'display dialog "Failed to install mlx-audio." & return & return & "You can install it manually: pip3 install mlx-audio" with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+                    osascript -e 'display dialog "Could not install local TTS." & return & return & "An internet connection is required for the first install.\nPlease check your connection and try again." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
                 fi
                 exit 0
             fi

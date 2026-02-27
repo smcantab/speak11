@@ -23,10 +23,10 @@ struct Config {
     var useSpeakerBoost: Bool   = true
 
     // Local TTS settings
-    var localVoice:      String = "af_heart"
-    var localLang:       String = "a"
+    var localVoice:      String = "bf_lily"
+    var localSpeed:      Double = 1.0
 
-    // Shared
+    // ElevenLabs speed (shared name kept for config compat)
     var speed:           Double = 1.0
 
     static func load() -> Config {
@@ -56,7 +56,7 @@ struct Config {
             case "USE_SPEAKER_BOOST":    c.useSpeakerBoost    = value == "true" || value == "1"
             case "SPEED":                c.speed              = Double(value) ?? c.speed
             case "LOCAL_VOICE":          c.localVoice         = value
-            case "LOCAL_LANG":           c.localLang          = value
+            case "LOCAL_SPEED":          c.localSpeed         = Double(value) ?? c.localSpeed
             default: break
             }
         }
@@ -77,7 +77,7 @@ struct Config {
             "USE_SPEAKER_BOOST=\"\(useSpeakerBoost ? "true" : "false")\"",
             "SPEED=\"\(String(format: "%.2f", speed))\"",
             "LOCAL_VOICE=\"\(localVoice)\"",
-            "LOCAL_LANG=\"\(localLang)\"",
+            "LOCAL_SPEED=\"\(String(format: "%.2f", localSpeed))\"",
         ]
         try? (lines.joined(separator: "\n") + "\n")
             .write(toFile: configPath, atomically: true, encoding: .utf8)
@@ -99,6 +99,7 @@ private let knownVoices: [(name: String, id: String)] = [
 
 // Kokoro voices (curated English subset)
 private let kokoroVoices: [(name: String, id: String)] = [
+    ("Lily — British, bright", "bf_lily"),
     ("Heart — warm",           "af_heart"),
     ("Bella — soft",           "af_bella"),
     ("Nova — confident",       "af_nova"),
@@ -109,7 +110,6 @@ private let kokoroVoices: [(name: String, id: String)] = [
     ("Eric — steady",          "am_eric"),
     ("Michael — warm",         "am_michael"),
     ("Emma — British, warm",   "bf_emma"),
-    ("Lily — British, bright", "bf_lily"),
     ("George — British, deep", "bm_george"),
 ]
 
@@ -199,6 +199,9 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     // Credits cache (fetched from ElevenLabs API)
     private var cachedCredits: (used: Int, limit: Int, fetchedAt: Date)?
 
+    // TTS daemon process (managed mode — started by this app)
+    private var ttsDaemonProcess: Process?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(
@@ -209,6 +212,11 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         if !AXIsProcessTrusted() {
             requestAccessibility()
         }
+        updateTTSDaemon()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        stopTTSDaemon()
     }
 
     // Re-read config every time the menu opens so we pick up changes from
@@ -220,6 +228,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
            fresh.ttsBackend != config.ttsBackend {
             config = fresh
             rebuildMenu()
+            updateTTSDaemon()
         }
         fetchCredits()
     }
@@ -366,6 +375,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             do { try task.run() } catch {
                 speakLock.lock()
                 currentSpeakProcess = nil
+                if speakGeneration == gen { isSpeakingFlag = false }
                 speakLock.unlock()
                 DispatchQueue.main.async {
                     self.speakLock.lock()
@@ -381,6 +391,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             speakLock.lock()
             currentSpeakProcess = nil
             let currentGen = speakGeneration
+            if currentGen == gen { isSpeakingFlag = false }
             speakLock.unlock()
 
             DispatchQueue.main.async {
@@ -409,6 +420,65 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         pkill.waitUntilExit()
 
         process.terminate()
+    }
+
+    // MARK: - TTS daemon lifecycle
+
+    private var needsDaemon: Bool {
+        let b = config.ttsBackend
+        return (b == "local" || b == "auto") && isLocalInstalled
+    }
+
+    private var venvPythonPath: String {
+        (NSHomeDirectory() as NSString)
+            .appendingPathComponent(".local/share/speak11/venv/bin/python3")
+    }
+
+    private var ttsServerPath: String {
+        ((speakPath as NSString).deletingLastPathComponent as NSString)
+            .appendingPathComponent("tts_server.py")
+    }
+
+    private func startTTSDaemon() {
+        guard needsDaemon else { return }
+        if let existing = ttsDaemonProcess, existing.isRunning { return }
+
+        let python = venvPythonPath
+        let server = ttsServerPath
+
+        guard FileManager.default.isExecutableFile(atPath: python),
+              FileManager.default.fileExists(atPath: server) else { return }
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: python)
+        task.arguments = [server, "--managed"]
+        task.standardInput = FileHandle.nullDevice
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            ttsDaemonProcess = task
+        } catch {
+            // Daemon failed to start — speak.sh will fall back to direct invocation
+        }
+    }
+
+    private func stopTTSDaemon() {
+        guard let process = ttsDaemonProcess, process.isRunning else {
+            ttsDaemonProcess = nil
+            return
+        }
+        process.terminate()  // sends SIGTERM → daemon cleans up and exits
+        ttsDaemonProcess = nil
+    }
+
+    private func updateTTSDaemon() {
+        if needsDaemon {
+            startTTSDaemon()
+        } else {
+            stopTTSDaemon()
+        }
     }
 
     private func stopSpeaking() {
@@ -551,27 +621,20 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         let menu = NSMenu()
         menu.delegate = self
 
-        // Backend submenu — when both backends are installed or auto mode
-        if config.backendsInstalled == "both" || config.ttsBackend == "auto" {
-            menu.addItem(submenuItem("Backend", items: buildBackendItems()))
-            menu.addItem(.separator())
-        }
+        // Backend submenu — always visible so users can discover and switch
+        menu.addItem(submenuItem("Backend", items: buildBackendItems()))
+        menu.addItem(.separator())
 
-        // Voice submenu — different voices per backend
-        if config.ttsBackend == "local" {
-            menu.addItem(submenuItem("Voice", items: buildLocalVoiceItems()))
-        } else {
+        let showEl      = config.ttsBackend == "auto" || config.ttsBackend == "elevenlabs"
+        let showLocal   = config.ttsBackend == "local" ||
+                          (config.ttsBackend == "auto" && isLocalInstalled)
+        let showHeaders = showEl && showLocal
+
+        // ── ElevenLabs section ──
+        if showEl {
+            if showHeaders { menu.addItem(hintItem("ElevenLabs")) }
             menu.addItem(submenuItem("Voice", items: buildVoiceItems()))
-        }
-
-        // Speed submenu — different ranges per backend
-        let speedSteps = config.ttsBackend == "local" ? localSpeedSteps : elSpeedSteps
-        menu.addItem(submenuItem("Speed", items: buildSpeedItems(steps: speedSteps)))
-
-        // Backend-specific settings
-        if config.ttsBackend == "local" {
-            // Language is auto-derived from voice prefix — no menu needed
-        } else {
+            menu.addItem(submenuItem("Speed", items: buildElSpeedItems()))
             menu.addItem(submenuItem("Model", items: buildModelItems()))
             menu.addItem(submenuItem("Stability", items: buildStabilityItems()))
             menu.addItem(submenuItem("Similarity", items: buildSimilarityItems()))
@@ -583,12 +646,19 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             boost.target = self
             boost.state = config.useSpeakerBoost ? .on : .off
             menu.addItem(boost)
+            menu.addItem(.separator())
         }
 
-        // API Key + Credits — when ElevenLabs or Auto is active
-        if config.ttsBackend == "elevenlabs" || config.ttsBackend == "auto" {
+        // ── Local (Kokoro) section ──
+        if showLocal {
+            if showHeaders { menu.addItem(hintItem("Local (Kokoro)")) }
+            menu.addItem(submenuItem("Voice", items: buildLocalVoiceItems()))
+            menu.addItem(submenuItem("Speed", items: buildLocalSpeedItems()))
             menu.addItem(.separator())
+        }
 
+        // API Key + Credits — when ElevenLabs is active
+        if showEl {
             // Credits display (hidden until fetched)
             let creditsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             creditsItem.tag = 999
@@ -659,10 +729,17 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         }
     }
 
-    private func buildSpeedItems(steps: [(label: String, value: Double)]) -> [NSMenuItem] {
-        steps.map { s in
+    private func buildElSpeedItems() -> [NSMenuItem] {
+        elSpeedSteps.map { s in
             item(s.label, #selector(pickSpeed(_:)),
                  repr: String(s.value), on: abs(s.value - config.speed) < 0.01)
+        }
+    }
+
+    private func buildLocalSpeedItems() -> [NSMenuItem] {
+        localSpeedSteps.map { s in
+            item(s.label, #selector(pickLocalSpeed(_:)),
+                 repr: String(s.value), on: abs(s.value - config.localSpeed) < 0.01)
         }
     }
 
@@ -718,21 +795,162 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         return parent
     }
 
+    // MARK: Backend setup helpers
+
+    private var isAppleSilicon: Bool {
+        var sysinfo = utsname()
+        uname(&sysinfo)
+        return withUnsafePointer(to: &sysinfo.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) {
+                String(cString: $0)
+            }
+        }.hasPrefix("arm64")
+    }
+
+    private var isLocalInstalled: Bool {
+        config.backendsInstalled == "local" || config.backendsInstalled == "both"
+    }
+
+    private var installLocalPath: String {
+        ((speakPath as NSString).deletingLastPathComponent as NSString)
+            .appendingPathComponent("install-local.sh")
+    }
+
+    /// Show "Install Local TTS" dialog. Returns true if user clicked Install.
+    private func offerLocalInstall(skipLabel: String = "Cancel") -> Bool {
+        guard isAppleSilicon else {
+            NSApp.activate(ignoringOtherApps: true)
+            let a = NSAlert()
+            a.messageText = "Apple Silicon Required"
+            a.informativeText = "Local TTS (Kokoro) requires an Apple Silicon Mac (M1 or later)."
+            a.alertStyle = .warning
+            a.addButton(withTitle: "OK")
+            a.runModal()
+            return false
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Install Local TTS"
+        alert.informativeText = "This will install mlx-audio and download the Kokoro voice model (~350 MB)."
+        alert.addButton(withTitle: "Install")
+        alert.addButton(withTitle: skipLabel)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// Run install-local.sh in background. On success, reload config, set
+    /// desiredBackend (because install-local.sh forces TTS_BACKEND="local"),
+    /// and rebuild the menu.
+    private func runInstallLocal(desiredBackend: String, completion: @escaping (Bool) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/bash")
+            task.arguments = [installLocalPath]
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError  = FileHandle.nullDevice
+            do { try task.run() } catch {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            task.waitUntilExit()
+            let success = task.terminationStatus == 0
+            DispatchQueue.main.async { [self] in
+                if success {
+                    config = Config.load()
+                    config.ttsBackend = desiredBackend
+                    config.save()
+                    rebuildMenu()
+                }
+                completion(success)
+            }
+        }
+    }
+
+    private func showInstallResult(success: Bool) {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        if success {
+            a.messageText = "Local TTS Installed"
+            a.informativeText = "mlx-audio and the Kokoro model are ready."
+        } else {
+            a.messageText = "Installation Failed"
+            a.informativeText = "Could not install local TTS.\n\nAn internet connection is required for the first install.\nPlease check your connection and try again."
+            a.alertStyle = .warning
+        }
+        a.addButton(withTitle: "OK")
+        a.runModal()
+    }
+
     // MARK: Actions
 
     @objc private func pickBackend(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
-        // Guard: prompt for API key when switching to ElevenLabs if none exists
+
         if id == "elevenlabs" {
+            // ElevenLabs requires an API key
             if readAPIKey() == nil {
-                if !showAPIKeyDialog(forBackendSwitch: true) {
-                    return  // user cancelled — don't switch
+                if !showAPIKeyDialog(forBackendSwitch: true) { return }
+            }
+        } else if id == "local" {
+            // Local requires mlx-audio installed
+            if !isLocalInstalled {
+                if !offerLocalInstall(skipLabel: "Cancel") { return }
+                // User accepted — install in background, switch now
+                config.ttsBackend = id
+                config.save()
+                rebuildMenu()
+                scheduleRespeak()
+                runInstallLocal(desiredBackend: id) { [weak self] ok in
+                    self?.showInstallResult(success: ok)
+                    self?.updateTTSDaemon()
                 }
+                return
+            }
+        } else {
+            // auto — ensure at least one backend is available
+            let hasKey   = readAPIKey() != nil
+            let hasLocal = isLocalInstalled
+
+            if !hasKey && !hasLocal {
+                // Neither ready — need at least one
+                if !showAPIKeyDialog(forBackendSwitch: true) {
+                    // Skipped API key — try local install
+                    if offerLocalInstall(skipLabel: "Cancel") {
+                        config.ttsBackend = id
+                        config.save()
+                        rebuildMenu()
+                        runInstallLocal(desiredBackend: id) { [weak self] ok in
+                            self?.showInstallResult(success: ok)
+                            self?.updateTTSDaemon()
+                        }
+                        return
+                    }
+                    return  // both skipped — don't switch
+                }
+            } else if !hasKey {
+                // Has local, missing API key — soft prompt (Skip is fine)
+                showAPIKeyDialog(forBackendSwitch: true, optional: true)
+            } else if !hasLocal {
+                // Has API key, missing local — offer install (Not Now is fine)
+                if offerLocalInstall(skipLabel: "Not Now") {
+                    config.ttsBackend = id
+                    config.save()
+                    rebuildMenu()
+                    scheduleRespeak()
+                    runInstallLocal(desiredBackend: id) { [weak self] ok in
+                        self?.showInstallResult(success: ok)
+                        self?.updateTTSDaemon()
+                    }
+                    return
+                }
+                // User chose "Not Now" — auto degrades to ElevenLabs-only
             }
         }
+
         config.ttsBackend = id
         config.save()
         rebuildMenu()
+        scheduleRespeak()
+        updateTTSDaemon()
     }
 
     @objc private func pickVoice(_ sender: NSMenuItem) {
@@ -789,6 +1007,15 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         scheduleRespeak()
     }
 
+    @objc private func pickLocalSpeed(_ sender: NSMenuItem) {
+        guard let str = sender.representedObject as? String,
+              let val = Double(str) else { return }
+        config.localSpeed = val
+        config.save()
+        rebuildMenu()
+        scheduleRespeak()
+    }
+
     @objc private func pickStability(_ sender: NSMenuItem) {
         guard let str = sender.representedObject as? String,
               let val = Double(str) else { return }
@@ -826,7 +1053,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     // MARK: - Credits Display
 
     private func fetchCredits() {
-        guard config.ttsBackend == "elevenlabs" || config.ttsBackend == "auto" else { return }
+        guard config.ttsBackend == "auto" else { return }
         guard let key = readAPIKey(), !key.isEmpty else { return }
 
         // Use cache if fresh (< 60s old)
@@ -873,19 +1100,29 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     }
 
     @discardableResult
-    private func showAPIKeyDialog(forBackendSwitch: Bool) -> Bool {
+    private func showAPIKeyDialog(forBackendSwitch: Bool, optional: Bool = false) -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         let existingKey = readAPIKey()
 
         let alert = NSAlert()
-        alert.messageText = forBackendSwitch ? "ElevenLabs API Key Required" : "ElevenLabs API Key"
-        alert.informativeText = forBackendSwitch
-            ? "Enter your ElevenLabs API key to use the cloud backend."
-            : "Enter or update your ElevenLabs API key."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        if existingKey != nil && !forBackendSwitch {
-            alert.addButton(withTitle: "Remove")
+        if optional {
+            alert.messageText = "Add ElevenLabs API Key"
+            alert.informativeText = "Add your API key for cloud TTS.\n\nWithout a key, Auto mode will use local TTS only."
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Skip")
+        } else if forBackendSwitch {
+            alert.messageText = "ElevenLabs API Key Required"
+            alert.informativeText = "Enter your ElevenLabs API key to use the cloud backend."
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Cancel")
+        } else {
+            alert.messageText = "ElevenLabs API Key"
+            alert.informativeText = "Enter or update your ElevenLabs API key."
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Cancel")
+            if existingKey != nil {
+                alert.addButton(withTitle: "Remove")
+            }
         }
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
