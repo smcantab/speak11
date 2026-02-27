@@ -1434,6 +1434,51 @@ check "tts_server.py: deletes segments and audio arrays" \
 check "tts_server.py: clears cache on error path too" \
     "yes" "$(awk '/except Exception/,/raise/' "$TTS_SERVER" | grep -q 'clear_cache' && echo "yes" || echo "no")"
 
+# ── 34. Generation cancellation on client disconnect ─────────────
+
+section "Generation cancellation"
+
+check "tts_server.py: CancelledError exception class" \
+    "yes" "$(grep -q 'class CancelledError' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: generate_audio accepts cancel_check parameter" \
+    "yes" "$(grep -q 'def generate_audio.*cancel_check' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: cancel_check called between segments" \
+    "yes" "$(awk '/for result in results/,/segments.append/' "$TTS_SERVER" | grep -q 'cancel_check' && echo "yes" || echo "no")"
+
+check "tts_server.py: raises CancelledError on disconnect" \
+    "yes" "$(grep -q 'raise CancelledError' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: _client_gone helper uses select" \
+    "yes" "$(grep -q 'def _client_gone' "$TTS_SERVER" && grep -q 'select.select' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: handle_client passes cancel_check lambda" \
+    "yes" "$(grep -q 'cancel_check=lambda' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: CancelledError caught in handle_client" \
+    "yes" "$(grep -q 'except CancelledError' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: cancelled generation is logged" \
+    "yes" "$(grep -q 'generation cancelled' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# ── 35. Threaded client handling ─────────────────────────────────
+
+section "Threaded client handling"
+
+check "tts_server.py: clients handled in threads" \
+    "yes" "$(grep -q 'threading.Thread(target=handle_client' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: client threads are daemon threads" \
+    "yes" "$(grep -q 'daemon=True' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# ── 36. Orphaned temp dir cleanup ────────────────────────────────
+
+section "Orphaned temp dir cleanup"
+
+check "tts_server.py: cleans up speak11_tts_ temp dirs on startup" \
+    "yes" "$(grep -q 'speak11_tts_' "$TTS_SERVER" && grep -q 'shutil.rmtree' "$TTS_SERVER" && echo "yes" || echo "no")"
+
 # ── Summary ──────────────────────────────────────────────────────
 
 printf "\n────────────────────────────────────────────\n"
