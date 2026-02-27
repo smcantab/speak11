@@ -277,6 +277,16 @@ def main():
     except FileNotFoundError:
         pass
 
+    # Clean up orphaned temp dirs from previous interrupted generations
+    import glob
+    import shutil
+
+    for d in glob.glob(os.path.join(tempfile.gettempdir(), "speak11_tts_*")):
+        try:
+            shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
+
     # Signal handlers for clean shutdown
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
