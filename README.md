@@ -113,7 +113,7 @@ Double-click **`uninstall.command`** — it removes everything including the Acc
 | Symptom | Fix |
 |---------|-----|
 | `⌥⇧/` does nothing | Grant Accessibility permission when prompted, or check System Settings → Privacy & Security → Accessibility |
-| Waveform icon not in menu bar | Open `~/Applications/Speak11 Settings.app` manually, or re-run `install.command` |
+| Waveform icon not in menu bar | Open `~/Applications/Speak11.app` manually, or re-run `install.command` |
 | HTTP 401 | API key is wrong or expired — run `install.command` again |
 | HTTP 429 | Monthly character quota exceeded — if both backends are installed, the app automatically falls back to local TTS. On Apple Silicon with ElevenLabs only, it will offer to install local TTS as a free alternative |
 | "python3 not found" | Run `xcode-select --install` in Terminal |
@@ -182,7 +182,7 @@ export SPEAK11_IDLE_TIMEOUT="600"              # daemon idle shutdown (seconds, 
 
 The global hotkey requires Accessibility access. The app prompts for this on first launch, but if you need to grant it manually:
 
-**System Settings → Privacy & Security → Accessibility** → enable **Speak11 Settings**
+**System Settings → Privacy & Security → Accessibility** → enable **Speak11**
 
 The hotkey activates automatically once access is granted.
 

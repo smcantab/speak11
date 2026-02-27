@@ -85,7 +85,7 @@ else
 fi
 
 # ── Settings app choice (ask before work begins) ─────────────────
-settings_result=$(osascript -e 'button returned of (display dialog "Install the Speak11 Settings app?\n\nAdds a waveform icon to your menu bar to change voice, model, and speed without editing any files." with title "Speak11" buttons {"Skip", "Install"} default button "Install" with icon note)' 2>/dev/null)
+settings_result=$(osascript -e 'button returned of (display dialog "Install the Speak11 app?\n\nAdds a waveform icon to your menu bar to change voice, model, and speed without editing any files." with title "Speak11" buttons {"Skip", "Install"} default button "Install" with icon note)' 2>/dev/null)
 
 # ── Show terminal with progress ──────────────────────────────────
 osascript -e 'tell application "Terminal"
@@ -353,7 +353,7 @@ step "Quick Action created"
 
 # ── Build and install settings menu bar app ───────────────────────
 if [ "$settings_result" = "Install" ]; then
-    APP_BUNDLE="$HOME/Applications/Speak11 Settings.app"
+    APP_BUNDLE="$HOME/Applications/Speak11.app"
     APP_BINARY="$APP_BUNDLE/Contents/MacOS/Speak11Settings"
 
     mkdir -p "$APP_BUNDLE/Contents/MacOS"
@@ -385,7 +385,7 @@ if [ "$settings_result" = "Install" ]; then
     <key>CFBundleIdentifier</key>
     <string>com.speak11.settings</string>
     <key>CFBundleName</key>
-    <string>Speak11 Settings</string>
+    <string>Speak11</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>LSMinimumSystemVersion</key>
@@ -453,7 +453,7 @@ SWIFT_END
         printf '\n  \033[32mInstallation complete.\033[0m\n\n'
 
         # Offer login item
-        login_result=$(osascript -e 'button returned of (display dialog "Launch Speak11 Settings automatically at login?" with title "Speak11" buttons {"Not Now", "Yes"} default button "Yes" with icon note)' 2>/dev/null)
+        login_result=$(osascript -e 'button returned of (display dialog "Launch Speak11 automatically at login?" with title "Speak11" buttons {"Not Now", "Yes"} default button "Yes" with icon note)' 2>/dev/null)
         if [ "$login_result" = "Yes" ]; then
             osascript -e "tell application \"System Events\" to make login item at end with properties {path:\"$APP_BUNDLE\", hidden:true}" 2>/dev/null || true
         fi
