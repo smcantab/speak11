@@ -45,7 +45,7 @@ rm -rf "$HOME/Applications/Speak11.app"
 rm -rf "$HOME/Applications/Speak11 Settings.app"  # legacy name
 step "App bundle removed"
 
-# ── Remove script symlinks ───────────────────────────────────────
+# ── Remove scripts ────────────────────────────────────────────────
 rm -f "$HOME/.local/bin/speak.sh"
 rm -f "$HOME/.local/bin/tts_server.py"
 rm -f "$HOME/.local/bin/install-local.sh"
