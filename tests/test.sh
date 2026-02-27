@@ -1158,6 +1158,14 @@ check "install.command maps Both to auto backend" \
 check "install.command maps Local Only to local backend" \
     "yes" "$(grep -q '_CFG_BACKEND="local"' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
+check "install.command: Local Only + install fail exits with error" \
+    "yes" "$(awk '/Local Only.*install fail/,/exit 1/' "$SCRIPT_DIR/install.command" \
+        | grep -q 'exit 1' && echo "yes" || \
+        grep -B2 'exit 1' "$SCRIPT_DIR/install.command" | grep -q 'Local Only' && echo "yes" || echo "no")"
+
+check "install.command: Both + install fail falls back to ElevenLabs" \
+    "yes" "$(grep -q 'ElevenLabs will be used instead' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
 # ── 26. Backend submenu always visible ───────────────────────────
 
 section "Backend submenu always visible"
@@ -1368,8 +1376,20 @@ section "Per-backend speed"
 check "speak.sh: LOCAL_SPEED variable defined" \
     "yes" "$(grep -q 'LOCAL_SPEED=' "$SPEAK_SH" && echo "yes" || echo "no")"
 
+check "speak.sh: LOCAL_SPEED env var saved before config sourcing" \
+    "yes" "$(grep -q '_ENV_LOCAL_SPEED=' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: LOCAL_SPEED restored with env var priority" \
+    "yes" "$(grep -q '_ENV_LOCAL_SPEED:-' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: SPEED env var saved before config sourcing" \
+    "yes" "$(grep -q '_ENV_SPEED=' "$SPEAK_SH" && echo "yes" || echo "no")"
+
 check "speak.sh: local TTS uses LOCAL_SPEED" \
     "yes" "$(grep -q '_SPEED=\"\$LOCAL_SPEED\"' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: python3 check skipped for local-only mode" \
+    "yes" "$(grep -q 'TTS_BACKEND.*!=.*local.*python3' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "Speak11Settings.swift: localSpeed config field" \
     "yes" "$(grep -q 'localSpeed' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"

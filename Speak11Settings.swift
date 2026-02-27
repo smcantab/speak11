@@ -213,6 +213,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             requestAccessibility()
         }
         updateTTSDaemon()
+        fetchCredits()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -659,7 +660,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
 
         // API Key + Credits — when ElevenLabs is active
         if showEl {
-            // Credits display (hidden until fetched)
+            // Credits display (hidden until successfully fetched)
             let creditsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             creditsItem.tag = 999
             creditsItem.isEnabled = false
@@ -1107,17 +1108,17 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         let alert = NSAlert()
         if optional {
             alert.messageText = "Add ElevenLabs API Key"
-            alert.informativeText = "Add your API key for cloud TTS.\n\nWithout a key, Auto mode will use local TTS only."
+            alert.informativeText = "Add your API key for cloud TTS.\nThe key needs Text-to-Speech and User Read permissions.\n\nWithout a key, Auto mode will use local TTS only."
             alert.addButton(withTitle: "Save")
             alert.addButton(withTitle: "Skip")
         } else if forBackendSwitch {
             alert.messageText = "ElevenLabs API Key Required"
-            alert.informativeText = "Enter your ElevenLabs API key to use the cloud backend."
+            alert.informativeText = "Enter your ElevenLabs API key to use the cloud backend.\nThe key needs Text-to-Speech and User Read permissions."
             alert.addButton(withTitle: "Save")
             alert.addButton(withTitle: "Cancel")
         } else {
             alert.messageText = "ElevenLabs API Key"
-            alert.informativeText = "Enter or update your ElevenLabs API key."
+            alert.informativeText = "Enter or update your ElevenLabs API key.\nThe key needs Text-to-Speech and User Read permissions."
             alert.addButton(withTitle: "Save")
             alert.addButton(withTitle: "Cancel")
             if existingKey != nil {
