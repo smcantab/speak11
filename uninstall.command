@@ -39,7 +39,8 @@ tccutil reset Accessibility com.speak11.settings 2>/dev/null || true
 step "Accessibility permission removed"
 
 # ── Remove the app bundle ─────────────────────────────────────────
-rm -rf "$HOME/Applications/Speak11 Settings.app"
+rm -rf "$HOME/Applications/Speak11.app"
+rm -rf "$HOME/Applications/Speak11 Settings.app"  # legacy name
 step "App bundle removed"
 
 # ── Remove script symlinks ───────────────────────────────────────
@@ -76,6 +77,7 @@ security delete-generic-password \
 step "API key removed from Keychain"
 
 # ── Remove login item ────────────────────────────────────────────
+osascript -e 'tell application "System Events" to delete (every login item whose name is "Speak11")' 2>/dev/null || true
 osascript -e 'tell application "System Events" to delete (every login item whose name is "Speak11 Settings")' 2>/dev/null || true
 step "Login item removed"
 
