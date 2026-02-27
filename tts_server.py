@@ -85,6 +85,9 @@ def warmup_pipeline():
 
 def generate_audio(text, voice, speed, lang_code):
     """Generate a WAV file from text.  Returns the file path."""
+    import gc
+
+    import mlx.core as mx
     import numpy as np
     from mlx_audio.audio_io import write as audio_write
 
@@ -114,13 +117,20 @@ def generate_audio(text, voice, speed, lang_code):
         if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
             raise RuntimeError("audio file empty after write")
 
+        # Release MLX metal buffers so memory doesn't accumulate
+        del segments, audio
+        gc.collect()
+        mx.metal.clear_cache()
+
         return out_path
 
     except Exception:
-        # Clean up temp dir on failure
+        # Clean up temp dir and metal buffers on failure
         import shutil
 
         shutil.rmtree(tmp_dir, ignore_errors=True)
+        gc.collect()
+        mx.metal.clear_cache()
         raise
 
 
