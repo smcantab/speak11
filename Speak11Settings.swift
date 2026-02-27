@@ -1053,7 +1053,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     // MARK: - Credits Display
 
     private func fetchCredits() {
-        guard config.ttsBackend == "auto" else { return }
+        guard config.ttsBackend == "auto" || config.ttsBackend == "elevenlabs" else { return }
         guard let key = readAPIKey(), !key.isEmpty else { return }
 
         // Use cache if fresh (< 60s old)

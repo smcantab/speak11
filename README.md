@@ -26,10 +26,11 @@
 
 1. [Download the repository](../../archive/refs/heads/main.zip) and unzip it
 2. Double-click **`install.command`**
-3. Click **Continue**, then paste your ElevenLabs API key (or **Skip** on Apple Silicon to use free local TTS only)
-4. Click **Install** when prompted about the settings app — this adds the menu bar icon and registers `⌥⇧/` as a global hotkey
+3. Click **Continue**, then choose your backend: **ElevenLabs Only**, **Both** (recommended), or **Local Only** (Apple Silicon only)
+4. Paste your API key if prompted
+5. Click **Install** when prompted about the settings app — this adds the menu bar icon and registers `⌥⇧/` as a global hotkey
 
-On Apple Silicon, local TTS (mlx-audio + Kokoro) is installed automatically for free offline use.
+Choosing **Both** or **Local Only** on Apple Silicon installs mlx-audio + Kokoro for free offline TTS.
 
 > **Getting your API key:** sign in at [elevenlabs.io](https://elevenlabs.io) → click your profile icon → **Profile + API Key** → copy the key.
 
