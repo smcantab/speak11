@@ -354,15 +354,15 @@ step "Quick Action created"
 # ── Build and install settings menu bar app ───────────────────────
 if [ "$settings_result" = "Install" ]; then
     APP_BUNDLE="$HOME/Applications/Speak11.app"
-    APP_BINARY="$APP_BUNDLE/Contents/MacOS/Speak11Settings"
+    APP_BINARY="$APP_BUNDLE/Contents/MacOS/Speak11"
 
     mkdir -p "$APP_BUNDLE/Contents/MacOS"
 
     # Compile
-    spin "Compiling settings app…"
+    spin "Compiling app…"
     compile_ok=0
     set +e
-    swiftc "$SCRIPT_DIR/Speak11Settings.swift" -o "$APP_BINARY" -O 2>/dev/null
+    swiftc "$SCRIPT_DIR/Speak11.swift" -o "$APP_BINARY" -O 2>/dev/null
     compile_ok=$?
     set -e
     unspin
@@ -372,7 +372,7 @@ if [ "$settings_result" = "Install" ]; then
         printf '\n'
         osascript -e 'display dialog "Could not compile the settings app.\n\nMake sure Xcode Command Line Tools are installed:\n  xcode-select --install" with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
     else
-        step "Settings app compiled"
+        step "App compiled"
 
         # Info.plist
         cat > "$APP_BUNDLE/Contents/Info.plist" << 'END_PLIST'
@@ -381,9 +381,9 @@ if [ "$settings_result" = "Install" ]; then
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>Speak11Settings</string>
+    <string>Speak11</string>
     <key>CFBundleIdentifier</key>
-    <string>com.speak11.settings</string>
+    <string>com.speak11.app</string>
     <key>CFBundleName</key>
     <string>Speak11</string>
     <key>CFBundleVersion</key>
