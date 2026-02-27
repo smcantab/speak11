@@ -1479,6 +1479,34 @@ section "Orphaned temp dir cleanup"
 check "tts_server.py: cleans up speak11_tts_ temp dirs on startup" \
     "yes" "$(grep -q 'speak11_tts_' "$TTS_SERVER" && grep -q 'shutil.rmtree' "$TTS_SERVER" && echo "yes" || echo "no")"
 
+# ── 37. Unicode sanitization ────────────────────────────────────
+
+section "Unicode sanitization"
+
+check "speak.sh: sanitizes text with iconv before TTS" \
+    "yes" "$(grep -q 'iconv -f UTF-8 -t UTF-8//IGNORE' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: iconv runs after reading text, before save" \
+    "yes" "$(awk '/Strip invalid Unicode/,/Save text for live/' "$SPEAK_SH" | grep -q 'iconv' && echo "yes" || echo "no")"
+
+check "iconv: preserves normal ASCII" \
+    "Hello world" "$(printf 'Hello world' | iconv -f UTF-8 -t UTF-8//IGNORE)"
+
+check "iconv: preserves accented characters" \
+    "café résumé" "$(printf 'caf\xc3\xa9 r\xc3\xa9sum\xc3\xa9' | iconv -f UTF-8 -t UTF-8//IGNORE)"
+
+check "iconv: preserves CJK characters" \
+    "$(printf '\xe4\xb8\xad\xe6\x96\x87')" "$(printf '\xe4\xb8\xad\xe6\x96\x87' | iconv -f UTF-8 -t UTF-8//IGNORE)"
+
+check "iconv: strips unpaired surrogates" \
+    "ab" "$(printf 'a\xed\xb3\x95b' | iconv -f UTF-8 -t UTF-8//IGNORE)"
+
+check "iconv: strips invalid bytes" \
+    "ab" "$(printf 'a\xfe\xffb' | iconv -f UTF-8 -t UTF-8//IGNORE)"
+
+check "iconv: empty string passes through" \
+    "" "$(printf '' | iconv -f UTF-8 -t UTF-8//IGNORE)"
+
 # ── Summary ──────────────────────────────────────────────────────
 
 printf "\n────────────────────────────────────────────\n"
