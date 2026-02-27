@@ -209,7 +209,7 @@ Logs are written to `~/.local/share/speak11/tts.log`.
 
 ### Updating
 
-Pull the latest changes — the symlink means `~/.local/bin/speak.sh` always reflects the current repo file, so no extra steps needed.
+Re-run `install.command` to update the scripts and app to the latest version.
 
 To update your API key, run `install.command` again — or update it directly:
 

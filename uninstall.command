@@ -48,7 +48,8 @@ step "App bundle removed"
 # ── Remove script symlinks ───────────────────────────────────────
 rm -f "$HOME/.local/bin/speak.sh"
 rm -f "$HOME/.local/bin/tts_server.py"
-step "Script symlinks removed"
+rm -f "$HOME/.local/bin/install-local.sh"
+step "Scripts removed"
 
 # ── Remove the Services workflow ──────────────────────────────────
 rm -rf "$HOME/Library/Services/Speak Selection.workflow"

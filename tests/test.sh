@@ -476,9 +476,10 @@ _STUBS=$(mktemp -d)
 _LOG="$_STUBS/osascript.log"
 printf '#!/bin/bash\necho "fake-key"\n' > "$_STUBS/security"
 
-# osascript: log calls, return "Not Now" (user declines local install)
+# osascript: log dialog calls, return "Not Now" (user declines local install)
 cat > "$_STUBS/osascript" << STUB
 #!/bin/bash
+case "\$*" in *"volume settings"*) echo "false"; exit 0;; esac
 echo "\$*" >> "$_LOG"
 echo "Not Now"
 STUB
@@ -537,9 +538,10 @@ _LOG="$_STUBS/osascript.log"
 printf '#!/bin/bash\nexit 1\n' > "$_STUBS/security"
 printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
 
-# osascript: log calls
+# osascript: log dialog calls (ignore volume queries from mute check)
 cat > "$_STUBS/osascript" << STUB
 #!/bin/bash
+case "\$*" in *"volume settings"*) echo "false"; exit 0;; esac
 echo "\$*" >> "$_LOG"
 echo "OK"
 STUB
@@ -575,9 +577,10 @@ mkdir -p "$_MARKERS"
 printf '#!/bin/bash\necho "fake-key"\n' > "$_STUBS/security"
 printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
 
-# osascript: log calls (should NOT be called for silent fallback)
+# osascript: log dialog calls (ignore volume queries from mute check)
 cat > "$_STUBS/osascript" << STUB
 #!/bin/bash
+case "\$*" in *"volume settings"*) echo "false"; exit 0;; esac
 echo "\$*" >> "$_LOG"
 echo "OK"
 STUB
@@ -882,6 +885,7 @@ echo "estimated duration: 5.000000 sec"
 STUB
 cat > "$_STUBS/osascript" << STUB
 #!/bin/bash
+case "\$*" in *"volume settings"*) echo "false"; exit 0;; esac
 echo "\$*" >> "$_LOG"
 echo "OK"
 STUB
@@ -1355,11 +1359,23 @@ check "tts_server.py: parent watchdog for orphan detection" \
 check "tts_server.py: pipeline warmup" \
     "yes" "$(grep -q 'warmup_pipeline' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-check "install.command: tts_server.py symlinked" \
-    "yes" "$(grep -q 'tts_server.py' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+check "install.command: copies speak.sh" \
+    "yes" "$(grep -q 'cp -f.*speak.sh' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
-check "uninstall.command: removes tts_server.py symlink" \
+check "install.command: copies tts_server.py" \
+    "yes" "$(grep -q 'cp -f.*tts_server.py' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "install.command: copies install-local.sh" \
+    "yes" "$(grep -q 'cp -f.*install-local.sh' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "install.command: no symlinks (uses cp not ln)" \
+    "yes" "$(grep -q 'ln -s' "$SCRIPT_DIR/install.command" && echo "no" || echo "yes")"
+
+check "uninstall.command: removes tts_server.py" \
     "yes" "$(grep -q 'tts_server.py' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
+
+check "uninstall.command: removes install-local.sh" \
+    "yes" "$(grep -q 'install-local.sh' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
 
 check "Speak11.swift: startTTSDaemon method" \
     "yes" "$(grep -q 'startTTSDaemon' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
@@ -1506,6 +1522,22 @@ check "iconv: strips invalid bytes" \
 
 check "iconv: empty string passes through" \
     "" "$(printf '' | iconv -f UTF-8 -t UTF-8//IGNORE)"
+
+# ── 38. Mute check ──────────────────────────────────────────────
+
+section "Mute check"
+
+check "speak.sh: checks mute status before TTS" \
+    "yes" "$(grep -q 'output muted of (get volume settings)' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: mute dialog offers Unmute & Play" \
+    "yes" "$(grep -q 'Unmute & Play' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: unmutes system audio on confirmation" \
+    "yes" "$(grep -q 'set volume without output muted' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: mute check exits on Cancel" \
+    "yes" "$(grep -q 'exit 0' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # ── Summary ──────────────────────────────────────────────────────
 
