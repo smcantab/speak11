@@ -83,6 +83,14 @@ fi
 # Strip invalid Unicode (unpaired surrogates from PDFs, etc.)
 TEXT=$(printf '%s' "$TEXT" | iconv -f UTF-8 -t UTF-8//IGNORE)
 
+# ── Mute check ────────────────────────────────────────────────────
+if osascript -e 'output muted of (get volume settings)' 2>/dev/null | grep -q 'true'; then
+    mute_result=$(osascript -e 'button returned of (display dialog "Your Mac is muted." with title "Speak11" buttons {"Cancel", "Unmute & Play"} default button "Unmute & Play" with icon caution)' 2>/dev/null) || exit 0
+    if [ "$mute_result" = "Unmute & Play" ]; then
+        osascript -e 'set volume without output muted' 2>/dev/null
+    fi
+fi
+
 # Save text for live settings preview (position-aware respeak)
 printf '%s' "$TEXT" > "$TEXT_FILE"
 

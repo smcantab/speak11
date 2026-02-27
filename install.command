@@ -56,7 +56,7 @@ unspin() {
 osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
 
 # ── Welcome ───────────────────────────────────────────────────────
-result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Link the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS for free offline use (Apple Silicon)" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null)
+result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Copy the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS for free offline use (Apple Silicon)" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null)
 [ "$result" = "Quit" ] && exit 0
 
 # ── Architecture detection ───────────────────────────────────────
@@ -128,9 +128,11 @@ fi
 
 # ── Install speak.sh ──────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR"
-ln -sf "$SCRIPT_DIR/speak.sh" "$INSTALL_DIR/speak.sh"
-ln -sf "$SCRIPT_DIR/tts_server.py" "$INSTALL_DIR/tts_server.py"
-step "Scripts linked to ~/.local/bin"
+cp -f "$SCRIPT_DIR/speak.sh" "$INSTALL_DIR/speak.sh"
+cp -f "$SCRIPT_DIR/tts_server.py" "$INSTALL_DIR/tts_server.py"
+cp -f "$SCRIPT_DIR/install-local.sh" "$INSTALL_DIR/install-local.sh"
+chmod +x "$INSTALL_DIR/speak.sh" "$INSTALL_DIR/install-local.sh"
+step "Scripts copied to ~/.local/bin"
 
 # ── Install Automator Quick Action ────────────────────────────────
 mkdir -p "$SERVICES_DIR/$WORKFLOW_NAME/Contents"
