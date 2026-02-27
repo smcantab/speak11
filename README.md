@@ -6,7 +6,8 @@
 
 <p align="center">
   Select text in any app, press <kbd>⌥</kbd><kbd>⇧</kbd><kbd>/</kbd>, hear it read aloud.<br>
-  Uses <a href="https://elevenlabs.io">ElevenLabs</a> (cloud) or <a href="https://github.com/Blaizzy/mlx-audio">mlx-audio / Kokoro</a> (local, Apple Silicon) for text-to-speech.
+  Cloud TTS via <a href="https://elevenlabs.io">ElevenLabs</a>, or local TTS via <a href="https://github.com/Blaizzy/mlx-audio">Kokoro</a> (Apple Silicon).<br>
+  Runs in your menu bar.
 </p>
 
 <p align="center">
@@ -32,7 +33,7 @@
 
 Choosing **Both** or **Local Only** on Apple Silicon installs mlx-audio + Kokoro for free offline TTS.
 
-> **Getting your API key:** sign in at [elevenlabs.io](https://elevenlabs.io) → click your profile icon → **Profile + API Key** → copy the key.
+> **Getting your API key:** sign in at [elevenlabs.io](https://elevenlabs.io) → click your profile icon → **Profile + API Key** → create or copy a key. The key needs the **Text-to-Speech** and **User Read** permissions enabled (User Read lets the menu bar show your remaining credits).
 
 > **Local TTS note:** if no Python 3.10+ is found on your system, a standalone Python (~17 MB) is downloaded automatically. The Kokoro voice model (~350 MB) is also downloaded during installation.
 
@@ -114,8 +115,9 @@ Double-click **`uninstall.command`** — it removes everything including the Acc
 | `⌥⇧/` does nothing | Grant Accessibility permission when prompted, or check System Settings → Privacy & Security → Accessibility |
 | Waveform icon not in menu bar | Open `~/Applications/Speak11 Settings.app` manually, or re-run `install.command` |
 | HTTP 401 | API key is wrong or expired — run `install.command` again |
-| HTTP 429 | Monthly character quota exceeded — on Apple Silicon, the app will offer to install local TTS as a free alternative |
+| HTTP 429 | Monthly character quota exceeded — if both backends are installed, the app automatically falls back to local TTS. On Apple Silicon with ElevenLabs only, it will offer to install local TTS as a free alternative |
 | "python3 not found" | Run `xcode-select --install` in Terminal |
+| Local TTS is slow | Check `~/.local/share/speak11/tts.log` for errors. The TTS daemon keeps the model loaded and warmed up in memory so requests are near-instant |
 
 ## Cost
 
@@ -160,6 +162,8 @@ export ELEVENLABS_VOICE_ID="your-voice-id"
 export ELEVENLABS_MODEL_ID="eleven_multilingual_v2"
 export TTS_BACKEND="local"                     # "auto" (default), "elevenlabs", or "local"
 export LOCAL_VOICE="am_adam"                   # Kokoro voice ID
+export LOCAL_SPEED="1.25"                      # 0.5 to 2.0
+export SPEAK11_IDLE_TIMEOUT="600"              # daemon idle shutdown (seconds, default 300)
 ```
 
 ### Voice IDs
@@ -196,6 +200,12 @@ The installer also creates a macOS Services action you can bind to any shortcut.
 2. Find **Speak Selection** and assign a shortcut — e.g. `⌃⌥S`
 
 > **Speak Selection** not in the list? Log out and back in, or trigger via right-click → **Services**.
+
+### TTS daemon
+
+Local TTS uses a persistent daemon (`tts_server.py`) that keeps the Kokoro model loaded in memory. The daemon starts automatically on first local TTS request and shuts down after 5 minutes of inactivity. When the Settings app is running, it manages the daemon directly.
+
+Logs are written to `~/.local/share/speak11/tts.log`.
 
 ### Updating
 

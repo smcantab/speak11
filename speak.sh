@@ -15,6 +15,8 @@
 _ENV_TTS_BACKEND="${TTS_BACKEND:-}"
 _ENV_TTS_BACKENDS_INSTALLED="${TTS_BACKENDS_INSTALLED:-}"
 _ENV_LOCAL_VOICE="${LOCAL_VOICE:-}"
+_ENV_LOCAL_SPEED="${LOCAL_SPEED:-}"
+_ENV_SPEED="${SPEED:-}"
 
 # Load settings written by the menu bar settings app.
 _CONFIG="$HOME/.config/speak11/config"
@@ -36,8 +38,19 @@ if [ "$TTS_BACKEND" = "elevenlabs" ] || [ "$TTS_BACKEND" = "auto" ]; then
     USE_SPEAKER_BOOST="${USE_SPEAKER_BOOST:-true}"
 fi
 
-SPEED="${SPEED:-1.0}"
-LOCAL_SPEED="${LOCAL_SPEED:-1.0}"
+SPEED="${_ENV_SPEED:-${SPEED:-1.0}}"
+LOCAL_SPEED="${_ENV_LOCAL_SPEED:-${LOCAL_SPEED:-1.0}}"
+
+# ── Auto-mode resolution ──────────────────────────────────────────
+# Must run before preflight checks so the python3 guard knows the
+# resolved backend (auto → local when there is no API key).
+if [ "$TTS_BACKEND" = "auto" ]; then
+    TTS_BACKENDS_INSTALLED="both"  # auto always enables fallback
+    if [ -z "$ELEVENLABS_API_KEY" ]; then
+        # No API key available — go straight to local TTS
+        TTS_BACKEND="local"
+    fi
+fi
 
 # ── Toggle: stop playback if already running ───────────────────────
 PID_FILE="${TMPDIR:-/tmp}/speak11_tts.pid"
@@ -78,7 +91,8 @@ if [ "$TTS_BACKEND" = "elevenlabs" ]; then
     fi
 fi
 
-if ! command -v python3 &>/dev/null; then
+# python3 is needed for ElevenLabs JSON encoding (local mode uses VENV_PYTHON)
+if [ "$TTS_BACKEND" != "local" ] && ! command -v python3 &>/dev/null; then
     osascript -e 'display dialog "python3 is required but not found." & return & return & "Install Xcode Command Line Tools: xcode-select --install" with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
     exit 1
 fi
@@ -243,15 +257,6 @@ play_audio() {
     wait "$PLAY_PID"
 }
 
-# ── Auto-mode resolution ──────────────────────────────────────────
-if [ "$TTS_BACKEND" = "auto" ]; then
-    TTS_BACKENDS_INSTALLED="both"  # auto always enables fallback
-    if [ -z "$ELEVENLABS_API_KEY" ]; then
-        # No API key available — go straight to local TTS
-        TTS_BACKEND="local"
-    fi
-fi
-
 # ── Generate audio ───────────────────────────────────────────────
 
 if [ "$TTS_BACKEND" = "local" ]; then
@@ -338,10 +343,10 @@ else
                 else
                     osascript -e 'display dialog "Could not install local TTS." & return & return & "An internet connection is required for the first install.\nPlease check your connection and try again." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
                 fi
-                exit 0
             fi
+            exit 1  # user already saw the quota dialog
         fi
-        # "Not Now" or Intel Mac — fall through to generic error handler
+        # Intel Mac — fall through to generic error handler
     fi
 
     # ── Handle other errors ──────────────────────────────────────

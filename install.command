@@ -74,10 +74,10 @@ API_KEY=""
 if [ "$BACKEND_CHOICE" = "Local Only" ]; then
     : # no API key needed
 elif [ "$BACKEND_CHOICE" = "Both" ]; then
-    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:\n\nSkip to use local TTS only when ElevenLabs is unavailable." with title "Speak11" default answer "" with hidden answer buttons {"Skip", "Install"} default button "Install")' 2>/dev/null || true)
+    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:\n\nThe key needs Text-to-Speech and User Read permissions.\n\nSkip to use local TTS only when ElevenLabs is unavailable." with title "Speak11" default answer "" with hidden answer buttons {"Skip", "Install"} default button "Install")' 2>/dev/null || true)
 else
     # ElevenLabs Only (or Intel — same thing)
-    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:" with title "Speak11" default answer "" with hidden answer buttons {"Cancel", "Install"} default button "Install")' 2>/dev/null)
+    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:\n\nThe key needs Text-to-Speech and User Read permissions." with title "Speak11" default answer "" with hidden answer buttons {"Cancel", "Install"} default button "Install")' 2>/dev/null)
     if [ -z "$API_KEY" ]; then
         osascript -e 'display dialog "No API key entered. Installation cancelled." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
         exit 1
@@ -117,7 +117,12 @@ if $IS_ARM64 && [ "$BACKEND_CHOICE" != "ElevenLabs Only" ]; then
         step "mlx-audio installed"
     else
         printf '  \033[31m✗\033[0m  mlx-audio installation failed\n'
-        osascript -e 'display dialog "Could not install local TTS.\n\nAn internet connection is required for the first install.\nPlease check your connection and try again." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+        if [ "$BACKEND_CHOICE" = "Local Only" ]; then
+            osascript -e 'display dialog "Could not install local TTS.\n\nAn internet connection is required for the first install.\nPlease check your connection and try again." with title "Speak11" buttons {"OK"} default button "OK" with icon stop' 2>/dev/null
+            exit 1
+        else
+            osascript -e 'display dialog "Could not install local TTS.\n\nElevenLabs will be used instead.\nYou can re-run the installer later to add local TTS." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+        fi
     fi
 fi
 
@@ -476,11 +481,7 @@ case "$BACKEND_CHOICE" in
         ;;
     "Local Only")
         _CFG_BACKEND="local"
-        if [ "${mlx_ok:-1}" -eq 0 ]; then
-            _CFG_INSTALLED="local"
-        else
-            _CFG_INSTALLED="elevenlabs"  # fallback — local install failed
-        fi
+        _CFG_INSTALLED="local"
         ;;
 esac
 cat > "$HOME/.config/speak11/config" << CFGEOF
