@@ -16,6 +16,9 @@ FAST=false
 PASS=0
 FAIL=0
 
+# Isolate tests from any real running TTS daemon
+export TTS_SOCK="/tmp/speak11_test_nosock_$$"
+
 # ── Helpers ──────────────────────────────────────────────────────
 
 check() {
@@ -223,22 +226,21 @@ check "live PID → stops playback" \
 
 rm -rf "$TMPDIR_T"
 
-# ── 6. API key guard ─────────────────────────────────────────────
+# ── 6. No key + no local → failure ───────────────────────────────
 
-section "API key guard"
+section "No key + no local → failure"
 
-# Stubs: security returns nothing (simulates no Keychain entry); osascript is
-# a no-op so the error dialog doesn't pop up; curl must not be called at all.
+# Auto with no API key degrades to local. If local TTS also fails → exit 1.
 _STUBS=$(mktemp -d)
 printf '#!/bin/bash\nexit 1\n' > "$_STUBS/security"   # no Keychain entry
 printf '#!/bin/bash\nexit 0\n' > "$_STUBS/osascript"  # suppress dialogs
 printf '#!/bin/bash\nexit 0\n' > "$_STUBS/curl"       # must never be reached
-chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/curl"
+# python3 stub: fail all calls (no local TTS available)
+printf '#!/bin/bash\nexit 1\n' > "$_STUBS/python3"
+chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/curl" "$_STUBS/python3"
 
-# Pipe non-empty text so the script gets past the blank-text guard and
-# reaches the API key check.  Expect exit 1 (key not found).
-check_exit "empty ELEVENLABS_API_KEY with no Keychain entry → exits 1" 1 \
-    bash -c 'echo "hello world" | env PATH="'"$_STUBS"':$PATH" ELEVENLABS_API_KEY="" TTS_BACKEND=elevenlabs bash "'"$SPEAK_SH"'"'
+check_exit "auto + no API key + no local TTS → exits 1" 1 \
+    bash -c 'echo "hello world" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" ELEVENLABS_API_KEY="" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -333,48 +335,39 @@ else
     fi
 fi
 
-# ── 11. TTS_BACKEND / LOCAL_VOICE / LOCAL_LANG config priority ────
+# ── 11. TTS_BACKEND / LOCAL_VOICE config priority ─────────────────
 
-section "TTS_BACKEND / LOCAL_VOICE / LOCAL_LANG config priority"
+section "TTS_BACKEND / LOCAL_VOICE config priority"
 
 resolve_backend_config() {
-    local conf="$1" env_backend="${2:-}" env_voice="${3:-}" env_lang="${4:-}"
+    local conf="$1" env_backend="${2:-}" env_voice="${3:-}"
     (
-        unset TTS_BACKEND LOCAL_VOICE LOCAL_LANG
+        unset TTS_BACKEND LOCAL_VOICE
         [ -n "$env_backend" ] && export TTS_BACKEND="$env_backend"
         [ -n "$env_voice" ] && export LOCAL_VOICE="$env_voice"
-        [ -n "$env_lang" ] && export LOCAL_LANG="$env_lang"
-        # Save env vars before source can overwrite them
         _ENV_TTS_BACKEND="${TTS_BACKEND:-}"
         _ENV_LOCAL_VOICE="${LOCAL_VOICE:-}"
-        _ENV_LOCAL_LANG="${LOCAL_LANG:-}"
         _CONFIG="$conf"
         [ -f "$_CONFIG" ] && source "$_CONFIG"
-        # Priority: env var > config file > hardcoded default
         TTS_BACKEND="${_ENV_TTS_BACKEND:-${TTS_BACKEND:-auto}}"
-        LOCAL_VOICE="${_ENV_LOCAL_VOICE:-${LOCAL_VOICE:-af_heart}}"
-        LOCAL_LANG="${_ENV_LOCAL_LANG:-${LOCAL_LANG:-a}}"
-        echo "${TTS_BACKEND}|${LOCAL_VOICE}|${LOCAL_LANG}"
+        LOCAL_VOICE="${_ENV_LOCAL_VOICE:-${LOCAL_VOICE:-bf_lily}}"
+        echo "${TTS_BACKEND}|${LOCAL_VOICE}"
     )
 }
 
 TMPCONF=$(mktemp)
-printf 'TTS_BACKEND="local"\nLOCAL_VOICE="am_adam"\nLOCAL_LANG="b"\n' > "$TMPCONF"
+printf 'TTS_BACKEND="local"\nLOCAL_VOICE="am_adam"\n' > "$TMPCONF"
 
 check "no config → backend defaults to auto" \
     "auto" "$(resolve_backend_config /nonexistent | cut -d'|' -f1)"
-check "no config → local voice defaults to af_heart" \
-    "af_heart" "$(resolve_backend_config /nonexistent | cut -d'|' -f2)"
-check "no config → local lang defaults to a" \
-    "a" "$(resolve_backend_config /nonexistent | cut -d'|' -f3)"
+check "no config → local voice defaults to bf_lily" \
+    "bf_lily" "$(resolve_backend_config /nonexistent | cut -d'|' -f2)"
 check "config sets backend=local" \
     "local" "$(resolve_backend_config "$TMPCONF" | cut -d'|' -f1)"
 check "config sets local voice=am_adam" \
     "am_adam" "$(resolve_backend_config "$TMPCONF" | cut -d'|' -f2)"
-check "config sets local lang=b" \
-    "b" "$(resolve_backend_config "$TMPCONF" | cut -d'|' -f3)"
 check "env var overrides config backend" \
-    "elevenlabs" "$(resolve_backend_config "$TMPCONF" "elevenlabs" | cut -d'|' -f1)"
+    "auto" "$(resolve_backend_config "$TMPCONF" "auto" | cut -d'|' -f1)"
 check "env var overrides config local voice" \
     "af_sky" "$(resolve_backend_config "$TMPCONF" "" "af_sky" | cut -d'|' -f2)"
 
@@ -404,23 +397,16 @@ cat > "$_STUBS/python3" << PYSTUB
 #!/bin/bash
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
-        prev=""
-        for a in "\$@"; do
-            if [ "\$prev" = "--output_path" ]; then
-                mkdir -p "\$a"
-                printf "RIFF" > "\$a/speak11.wav"
-            fi
-            prev="\$a"
-        done
+        printf "RIFF" > "speak11.wav"
         exit 0
     fi
 done
-/usr/bin/python3 "\$@"
+exit 1  # fail non-mlx_audio calls (e.g. daemon) so tests use fallback path
 PYSTUB
 chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/afplay" "$_STUBS/python3"
 
 check_exit "TTS_BACKEND=local with no API key → exits 0 (key not needed)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=local LOCAL_VOICE=af_heart bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local LOCAL_VOICE=af_heart bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -448,22 +434,16 @@ done
 printf "200"
 STUB
 
-# python3 stub: track mlx_audio calls, pass through json calls
+# python3 stub: track mlx_audio calls, block daemon, pass through json calls
 cat > "$_STUBS/python3" << STUB
 #!/bin/bash
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
         touch "$_MARKERS/mlx_called"
-        prev=""
-        for a in "\$@"; do
-            if [ "\$prev" = "--output_path" ]; then
-                mkdir -p "\$a"
-                printf "RIFF" > "\$a/speak11.wav"
-            fi
-            prev="\$a"
-        done
+        printf "RIFF" > "speak11.wav"
         exit 0
     fi
+    case "\$arg" in *tts_server.py) exit 1;; esac
 done
 /usr/bin/python3 "\$@"
 STUB
@@ -472,18 +452,18 @@ chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/afplay" "$_STUBS/curl" 
 
 # Test: local backend routes to mlx_audio, not curl
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=local bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "local backend → curl NOT called" \
     "no" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "local backend → mlx_audio called" \
     "yes" "$([ -f "$_MARKERS/mlx_called" ] && echo "yes" || echo "no")"
 
-# Test: elevenlabs backend routes to curl, not mlx_audio
+# Test: auto backend (with API key) routes to curl, not mlx_audio
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
-check "elevenlabs backend → curl called" \
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+check "auto backend (key) → curl called" \
     "yes" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
-check "elevenlabs backend → mlx_audio NOT called" \
+check "auto backend (key) → mlx_audio NOT called" \
     "no" "$([ -f "$_MARKERS/mlx_called" ] && echo "yes" || echo "no")"
 
 rm -rf "$_STUBS"
@@ -519,7 +499,7 @@ printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
 printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
 chmod +x "$_STUBS"/*
 
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 
 # The 429 handler should show a special dialog offering to install local TTS,
 # not just the generic error dialog (which also happens to contain "quota" from
@@ -541,7 +521,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "HTTP 401 → exits 1 (normal error, not quota)" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"'
 
 check "HTTP 401 → dialog does NOT offer local TTS install" \
     "no" "$(grep -qi 'Install Local TTS' "$_LOG" 2>/dev/null && echo "yes" || echo "no")"
@@ -570,12 +550,12 @@ cat > "$_STUBS/python3" << 'PYSTUB'
 for arg in "$@"; do
     [ "$arg" = "mlx_audio.tts.generate" ] && exit 1
 done
-/usr/bin/python3 "$@"
+exit 1  # fail non-mlx_audio calls (e.g. daemon) so tests use fallback path
 PYSTUB
 chmod +x "$_STUBS"/*
 
 check_exit "local TTS generation failure → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=local bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local bash "'"$SPEAK_SH"'"'
 
 # Check that the dialog specifically mentions local/generation failure, not just any dialog
 check "local TTS failure → error dialog mentions generation" \
@@ -613,22 +593,16 @@ done
 printf "429"
 CURLSTUB
 
-# python3: handle mlx_audio (for fallback) and pass through json calls
+# python3: handle mlx_audio (for fallback), block daemon, pass through json calls
 cat > "$_STUBS/python3" << STUB
 #!/bin/bash
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
         touch "$_MARKERS/mlx_fallback_called"
-        prev=""
-        for a in "\$@"; do
-            if [ "\$prev" = "--output_path" ]; then
-                mkdir -p "\$a"
-                printf "RIFF" > "\$a/speak11.wav"
-            fi
-            prev="\$a"
-        done
+        printf "RIFF" > "speak11.wav"
         exit 0
     fi
+    case "\$arg" in *tts_server.py) exit 1;; esac
 done
 /usr/bin/python3 "\$@"
 STUB
@@ -638,7 +612,7 @@ chmod +x "$_STUBS"/*
 # Test: 429 + both installed → silent fallback to local (no dialog)
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "429 + both installed → exits 0 (silent fallback)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
 check "429 + both → local TTS called as fallback" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 check "429 + both → no dialog shown (silent)" \
@@ -650,7 +624,7 @@ printf '#!/bin/bash\nexit 7\n' > "$_STUBS/curl"   # exit 7 = connection refused
 chmod +x "$_STUBS/curl"
 
 check_exit "network failure + both installed → exits 0 (silent fallback)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
 check "network failure + both → local TTS called as fallback" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 
@@ -663,6 +637,7 @@ for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
         exit 1  # simulate local TTS failure
     fi
+    case "\$arg" in *tts_server.py) exit 1;; esac
 done
 /usr/bin/python3 "\$@"
 STUB
@@ -680,7 +655,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "429 + both + local fails → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
 check "429 + both + local fails → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 
@@ -690,14 +665,14 @@ printf '#!/bin/bash\nexit 7\n' > "$_STUBS/curl"
 chmod +x "$_STUBS/curl"
 
 check_exit "network failure + both + local fails → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
 check "network failure + both + local fails → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 
 # Test: network failure + elevenlabs only → error dialog, not fallback
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "network failure + elevenlabs only → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"'
 check "network failure + elevenlabs only → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 check "network failure + elevenlabs only → no fallback to local" \
@@ -733,7 +708,7 @@ check "speak.sh writes TEXT_FILE" \
 check "play_audio writes STATUS_FILE with afinfo duration" \
     "yes" "$(grep -q 'afinfo.*STATUS_FILE\|STATUS_FILE.*afinfo\|STATUS_FILE' "$SPEAK_SH" && grep -q 'afinfo' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-# Functional test: run speak.sh with ElevenLabs backend and verify files are created
+# Functional test: run speak.sh with auto backend (cloud path) and verify files are created
 _STUBS=$(mktemp -d)
 _TESTTMP=$(mktemp -d)
 printf '#!/bin/bash\necho "fake-key"\n' > "$_STUBS/security"
@@ -759,7 +734,7 @@ printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
 chmod +x "$_STUBS"/*
 
 echo "Hello world. This is a test sentence." | \
-    env PATH="$_STUBS:$PATH" TMPDIR="$_TESTTMP" TTS_BACKEND=elevenlabs \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
 check "TEXT_FILE created with piped text" \
@@ -799,23 +774,16 @@ cat > "$_STUBS/python3" << PYSTUB
 #!/bin/bash
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
-        prev=""
-        for a in "\$@"; do
-            if [ "\$prev" = "--output_path" ]; then
-                mkdir -p "\$a"
-                printf "RIFF" > "\$a/speak11.wav"
-            fi
-            prev="\$a"
-        done
+        printf "RIFF" > "speak11.wav"
         exit 0
     fi
 done
-/usr/bin/python3 "\$@"
+exit 1  # fail non-mlx_audio calls (e.g. daemon) so tests use fallback path
 PYSTUB
 chmod +x "$_STUBS"/*
 
 echo "Local TTS test sentence." | \
-    env PATH="$_STUBS:$PATH" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
 check "local backend: TEXT_FILE created" \
@@ -857,22 +825,16 @@ done
 printf "200"
 STUB
 
-# python3 stub: track mlx_audio calls
+# python3 stub: track mlx_audio calls, block daemon, pass through json calls
 cat > "$_STUBS/python3" << STUB
 #!/bin/bash
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
         touch "$_MARKERS/mlx_called"
-        prev=""
-        for a in "\$@"; do
-            if [ "\$prev" = "--output_path" ]; then
-                mkdir -p "\$a"
-                printf "RIFF" > "\$a/speak11.wav"
-            fi
-            prev="\$a"
-        done
+        printf "RIFF" > "speak11.wav"
         exit 0
     fi
+    case "\$arg" in *tts_server.py) exit 1;; esac
 done
 /usr/bin/python3 "\$@"
 STUB
@@ -880,7 +842,7 @@ chmod +x "$_STUBS"/*
 
 # Test: auto + API key → ElevenLabs
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "auto + API key → curl called (ElevenLabs)" \
     "yes" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "auto + API key → mlx_audio NOT called" \
@@ -890,7 +852,7 @@ check "auto + API key → mlx_audio NOT called" \
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
 printf '#!/bin/bash\nexit 1\n' > "$_STUBS/security"
 chmod +x "$_STUBS/security"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=auto ELEVENLABS_API_KEY="" bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto ELEVENLABS_API_KEY="" bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "auto + no API key → curl NOT called" \
     "no" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "auto + no API key → mlx_audio called (local)" \
@@ -899,7 +861,7 @@ check "auto + no API key → mlx_audio called (local)" \
 # Test: auto + no API key → exits 0 (no error dialog)
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
 check_exit "auto + no API key → exits 0 (silent local)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=auto ELEVENLABS_API_KEY="" bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto ELEVENLABS_API_KEY="" bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -927,22 +889,16 @@ STUB
 # curl: simulate network failure
 printf '#!/bin/bash\nexit 7\n' > "$_STUBS/curl"
 
-# python3: handle mlx_audio for fallback
+# python3: handle mlx_audio for fallback, block daemon, pass through json calls
 cat > "$_STUBS/python3" << STUB
 #!/bin/bash
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
         touch "$_MARKERS/mlx_fallback_called"
-        prev=""
-        for a in "\$@"; do
-            if [ "\$prev" = "--output_path" ]; then
-                mkdir -p "\$a"
-                printf "RIFF" > "\$a/speak11.wav"
-            fi
-            prev="\$a"
-        done
+        printf "RIFF" > "speak11.wav"
         exit 0
     fi
+    case "\$arg" in *tts_server.py) exit 1;; esac
 done
 /usr/bin/python3 "\$@"
 STUB
@@ -950,7 +906,7 @@ chmod +x "$_STUBS"/*
 
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "auto + network failure → exits 0 (falls back)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"'
 check "auto + network failure → local TTS called" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 check "auto + network failure → no dialog (silent)" \
@@ -970,7 +926,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "auto + 429 → exits 0 (falls back)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"'
 check "auto + 429 → local TTS called" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 
@@ -980,7 +936,7 @@ rm -rf "$_STUBS"
 
 section "Auto-derive lang_code from voice"
 
-# speak.sh should derive lang_code from the voice prefix, not use LOCAL_LANG
+# speak.sh derives lang_code from the voice prefix (first character)
 check "speak.sh derives lang_code from LOCAL_VOICE" \
     "yes" "$(grep -q 'LOCAL_VOICE:0:1' "$SPEAK_SH" && echo "yes" || echo "no")"
 
@@ -1006,28 +962,25 @@ for arg in "\$@"; do
             if [ "\$prev" = "--lang_code" ]; then
                 printf "%s" "\$a" > "$_TESTTMP/captured_lang"
             fi
-            if [ "\$prev" = "--output_path" ]; then
-                mkdir -p "\$a"
-                printf "RIFF" > "\$a/speak11.wav"
-            fi
             prev="\$a"
         done
+        printf "RIFF" > "speak11.wav"
         exit 0
     fi
 done
-/usr/bin/python3 "\$@"
+exit 1  # fail non-mlx_audio calls (e.g. daemon) so tests use fallback path
 PYSTUB
 chmod +x "$_STUBS"/*
 
 # Test with American voice → should derive lang_code "a"
-echo "test" | env PATH="$_STUBS:$PATH" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
+echo "test" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 check "af_heart → lang_code 'a'" \
     "a" "$(cat "$_TESTTMP/captured_lang" 2>/dev/null)"
 
 # Test with British voice → should derive lang_code "b"
 rm -f "$_TESTTMP/captured_lang"
-echo "test" | env PATH="$_STUBS:$PATH" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=bf_emma \
+echo "test" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=bf_emma \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 check "bf_emma → lang_code 'b'" \
     "b" "$(cat "$_TESTTMP/captured_lang" 2>/dev/null)"
@@ -1056,12 +1009,379 @@ check "Swift: cachedCredits property exists" \
 check "Swift: pickLanguage removed" \
     "yes" "$(! grep -q 'func pickLanguage' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-# ── 24. install.command auto backend ─────────────────────────────
+# ── 24. isSpeakingFlag state machine invariants ──────────────────
+#
+# These tests verify the speaking-state lifecycle so that
+# scheduleRespeak() only fires while actually speaking.
+# A violation of any invariant = phantom respeaks or stuck state.
+
+section "isSpeakingFlag state machine"
+
+# ── Invariant 1: every exit path from runSpeak clears the flag ──
+#
+# runSpeak's async block has exactly 2 exit paths:
+#   a) task.run() throws → early return
+#   b) task.waitUntilExit() → normal completion
+# Both MUST set isSpeakingFlag = false (guarded by generation).
+
+# Count how many times isSpeakingFlag is set to true inside runSpeak.
+_TRUE_IN_RUNSPEAK=$(awk '/func runSpeak/,/^    \}/' "$SETTINGS_SWIFT" \
+    | grep -c 'isSpeakingFlag = true')
+
+# Count how many times it's set to false inside runSpeak.
+_FALSE_IN_RUNSPEAK=$(awk '/func runSpeak/,/^    \}/' "$SETTINGS_SWIFT" \
+    | grep -c 'isSpeakingFlag = false')
+
+check "runSpeak: flag-clear count >= flag-set count" \
+    "yes" "$([ "$_FALSE_IN_RUNSPEAK" -ge "$_TRUE_IN_RUNSPEAK" ] && echo "yes" || echo "no")"
+
+check "runSpeak: sets flag true exactly once (at entry)" \
+    "1" "$_TRUE_IN_RUNSPEAK"
+
+check "runSpeak: clears flag in both exit paths (count=2)" \
+    "2" "$_FALSE_IN_RUNSPEAK"
+
+# ── Invariant 2: error path clears the flag ─────────────────────
+# The catch block (task.run() throws) must clear isSpeakingFlag
+# before its early return.
+check "runSpeak: error path (catch) clears flag" \
+    "yes" "$(awk '/func runSpeak/,/^    \}/' "$SETTINGS_SWIFT" \
+        | awk '/} catch/,/return/' \
+        | grep -q 'isSpeakingFlag = false' && echo "yes" || echo "no")"
+
+# ── Invariant 3: normal completion clears the flag ──────────────
+# After task.waitUntilExit(), isSpeakingFlag must be set to false.
+check "runSpeak: normal completion (waitUntilExit) clears flag" \
+    "yes" "$(awk '/func runSpeak/,/^    \}/' "$SETTINGS_SWIFT" \
+        | awk '/waitUntilExit/,0' \
+        | grep -q 'isSpeakingFlag = false' && echo "yes" || echo "no")"
+
+# ── Invariant 4: flag always cleared under lock ─────────────────
+# Every assignment to isSpeakingFlag must be between
+# speakLock.lock() and speakLock.unlock().
+# Extract lines that write to the flag and verify each has a
+# preceding lock and subsequent unlock.
+_UNGUARDED=$(awk '
+    /speakLock\.lock/   { locked=1 }
+    /speakLock\.unlock/ { locked=0 }
+    /isSpeakingFlag =/ && !/var isSpeakingFlag/ && !locked { count++ }
+    END { print count+0 }
+' "$SETTINGS_SWIFT")
+
+check "isSpeakingFlag: all writes are under speakLock (0 unguarded)" \
+    "0" "$_UNGUARDED"
+
+# ── Invariant 5: flag always READ under lock ────────────────────
+# Reading isSpeakingFlag outside the lock is a race. Check that
+# every read (let x = isSpeakingFlag) is also guarded.
+_UNGUARDED_READ=$(awk '
+    /speakLock\.lock/   { locked=1 }
+    /speakLock\.unlock/ { locked=0 }
+    /= isSpeakingFlag/ && !locked { count++ }
+    END { print count+0 }
+' "$SETTINGS_SWIFT")
+
+check "isSpeakingFlag: all reads are under speakLock (0 unguarded)" \
+    "0" "$_UNGUARDED_READ"
+
+# ── Invariant 6: generation guard on clears in runSpeak ─────────
+# Inside runSpeak, isSpeakingFlag = false must always be guarded by
+# a generation check (to avoid clobbering a newer runSpeak call).
+_UNGUARDED_CLEAR=$(awk '/func runSpeak/,/^    \}/' "$SETTINGS_SWIFT" | awk '
+    /== gen/ { gen_check=1 }
+    /isSpeakingFlag = false/ {
+        if (!gen_check) unguarded++
+        gen_check=0
+    }
+    END { print unguarded+0 }
+')
+
+check "runSpeak: every flag-clear is generation-guarded (0 unguarded)" \
+    "0" "$_UNGUARDED_CLEAR"
+
+# ── Invariant 7: stopSpeaking unconditionally clears ────────────
+# stopSpeaking is the manual-stop path; it must always clear.
+check "stopSpeaking: clears isSpeakingFlag" \
+    "yes" "$(awk '/func stopSpeaking/,/^    \}/' "$SETTINGS_SWIFT" \
+        | grep -q 'isSpeakingFlag = false' && echo "yes" || echo "no")"
+
+# ── Invariant 8: scheduleRespeak guards on the flag ─────────────
+# scheduleRespeak must read isSpeakingFlag and return early if false.
+check "scheduleRespeak: reads isSpeakingFlag" \
+    "yes" "$(awk '/func scheduleRespeak/,/^    \}/' "$SETTINGS_SWIFT" \
+        | grep -q 'isSpeakingFlag' && echo "yes" || echo "no")"
+
+check "scheduleRespeak: returns early when not speaking" \
+    "yes" "$(awk '/func scheduleRespeak/,/^    \}/' "$SETTINGS_SWIFT" \
+        | grep -q 'guard speaking else.*return\|guard.*isSpeakingFlag.*return' \
+        && echo "yes" || echo "no")"
+
+# ── Invariant 9: handleHotkey reads flag to decide ──────────────
+# handleHotkey must check speaking state before deciding stop vs start.
+check "handleHotkey: reads isSpeakingFlag before branching" \
+    "yes" "$(awk '/func handleHotkey/,/^    \}/' "$SETTINGS_SWIFT" \
+        | grep -q 'isSpeakingFlag' && echo "yes" || echo "no")"
+
+# ── Invariant 10: no direct isSpeakingFlag access outside lock ──
+# Global check — total writes to isSpeakingFlag must equal the
+# number of writes found inside lock regions.
+# Exclude the property declaration (var isSpeakingFlag = false) — that's
+# an initializer, not a runtime mutation.
+_TOTAL_WRITES=$(grep 'isSpeakingFlag =' "$SETTINGS_SWIFT" \
+    | grep -vc 'var isSpeakingFlag')
+_LOCKED_WRITES=$(awk '
+    /speakLock\.lock/   { locked=1 }
+    /speakLock\.unlock/ { locked=0 }
+    /isSpeakingFlag =/ && !/var isSpeakingFlag/ && locked { count++ }
+    END { print count+0 }
+' "$SETTINGS_SWIFT")
+
+check "isSpeakingFlag: total runtime writes == locked writes ($_TOTAL_WRITES)" \
+    "$_TOTAL_WRITES" "$_LOCKED_WRITES"
+
+# ── 25. install.command auto backend ─────────────────────────────
 
 section "install.command auto backend"
 
-check "install.command sets auto for Both choice" \
+check "install.command always sets backend to auto" \
     "yes" "$(grep -q '_CFG_BACKEND="auto"' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# ── 26. Backend submenu always visible ───────────────────────────
+
+section "Backend submenu always visible"
+
+# rebuildMenu must call buildBackendItems unconditionally (no if-guard
+# checking backendsInstalled around it).
+_GUARDED_BACKEND=$(awk '
+    /backendsInstalled.*==.*"both"/ { in_guard=1 }
+    in_guard && /buildBackendItems/ { found=1 }
+    in_guard && /\}/ { in_guard=0 }
+    END { print (found ? "yes" : "no") }
+' "$SETTINGS_SWIFT")
+
+check "rebuildMenu: backend submenu NOT behind backendsInstalled guard" \
+    "no" "$_GUARDED_BACKEND"
+
+check "rebuildMenu: buildBackendItems still called" \
+    "yes" "$(grep -q 'buildBackendItems' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# ── 27. Guided setup for Local backend ──────────────────────────
+
+section "Guided setup for Local backend"
+
+# pickBackend must check local readiness when selecting "local"
+check "pickBackend: handles local backend readiness" \
+    "yes" "$(awk '/func pickBackend/,/^    \}/' "$SETTINGS_SWIFT" \
+        | grep -q 'local\|Local\|backendsInstalled' && echo "yes" || echo "no")"
+
+# Apple Silicon detection must exist somewhere in the file
+check "Swift: Apple Silicon check exists" \
+    "yes" "$(grep -q 'arm64\|isAppleSilicon\|utsname' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# A method to run install-local.sh must exist
+check "Swift: runInstallLocal method exists" \
+    "yes" "$(grep -q 'installLocal\|install-local\|runInstallLocal' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# Install must run on a background queue (not block UI)
+check "Swift: local install runs async (background queue)" \
+    "yes" "$(awk '/func runInstallLocal/,/^    \}/' "$SETTINGS_SWIFT" \
+        | grep -q 'DispatchQueue.*global' && echo "yes" || echo "no")"
+
+# Install result dialog must exist
+check "Swift: install result dialog exists" \
+    "yes" "$(grep -q 'showInstallResult\|Installation Failed\|Local TTS Installed\|installed.*successfully' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# ── 28. Guided setup for Auto backend ───────────────────────────
+
+section "Guided setup for Auto backend"
+
+# pickBackend must handle the auto case (the else branch)
+check "pickBackend: handles auto backend" \
+    "yes" "$(awk '/func pickBackend/,/^    \}/' "$SETTINGS_SWIFT" \
+        | grep -q 'auto\|hasKey.*hasLocal' && echo "yes" || echo "no")"
+
+# Soft/optional API key prompt for auto (Skip button instead of Cancel)
+check "Swift: optional API key dialog exists (Skip button)" \
+    "yes" "$(grep -q 'Skip\|optional.*Bool' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# ── 29. Auto shows both voice submenus ──────────────────────────
+
+section "Auto shows both voice submenus"
+
+# When backend is auto, rebuildMenu should show both voice submenus.
+# Use grep -A to capture lines after the auto branch.
+check "rebuildMenu: auto shows ElevenLabs voice section" \
+    "yes" "$(grep -q 'showEl.*=.*auto' "$SETTINGS_SWIFT" && \
+        grep -q 'if showEl' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "rebuildMenu: auto shows Local voice section (when installed)" \
+    "yes" "$(grep -q 'showLocal.*=.*local\|showLocal.*auto.*isLocalInstalled' "$SETTINGS_SWIFT" && \
+        grep -q 'if showLocal' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# ── 30. pickBackend calls scheduleRespeak ────────────────────────
+
+section "pickBackend calls scheduleRespeak"
+
+check "pickBackend: calls scheduleRespeak" \
+    "yes" "$(awk '/func pickBackend/,/^    \}/' "$SETTINGS_SWIFT" \
+        | grep -q 'scheduleRespeak' && echo "yes" || echo "no")"
+
+# ── 31. Standalone Python download fallback ────────────────────────
+
+section "Standalone Python download fallback"
+
+INSTALL_LOCAL="$SCRIPT_DIR/install-local.sh"
+
+check "install-local.sh: download_python function exists" \
+    "yes" "$(grep -q 'download_python' "$INSTALL_LOCAL" && echo "yes" || echo "no")"
+
+check "install-local.sh: SHA256 verification exists" \
+    "yes" "$(grep -q 'shasum.*256\|sha256' "$INSTALL_LOCAL" && echo "yes" || echo "no")"
+
+check "install-local.sh: standalone Python URL present" \
+    "yes" "$(grep -q 'python-build-standalone' "$INSTALL_LOCAL" && echo "yes" || echo "no")"
+
+check "install-local.sh: falls back to download when find_python fails" \
+    "yes" "$(grep -A5 'find_python.*||' "$INSTALL_LOCAL" \
+        | grep -q 'download_python' && echo "yes" || echo "no")"
+
+# ── 32. mktemp patterns (macOS requires XXXXXX at end) ─────────
+section "mktemp patterns"
+
+# macOS mktemp requires the X template at the very end of the string.
+# Suffixes like .tar.gz or .swift after XXXXXX silently fail.
+_mktemp_ok="yes"
+while IFS= read -r line; do
+    if echo "$line" | grep -qE 'mktemp[^)]*X{4,}\.[a-zA-Z]'; then
+        _mktemp_ok="no"
+        break
+    fi
+done < <(grep -rn 'mktemp' "$SCRIPT_DIR"/*.sh "$SCRIPT_DIR"/*.command 2>/dev/null)
+
+check "no mktemp templates with suffix after XXXXXX" \
+    "yes" "$_mktemp_ok"
+
+# ── 33. Local TTS integration (skipped with --fast) ────────────
+section "Local TTS integration"
+
+VENV_PY="$HOME/.local/share/speak11/venv/bin/python3"
+if [ "${1:-}" = "--fast" ] || [ ! -x "$VENV_PY" ]; then
+    printf "  %s  %s\n" "SKIP" "local TTS: venv not installed or --fast mode"
+else
+    _TTS_TMPD=$(mktemp -d /tmp/speak11_test_tts_XXXXXXXXXX)
+    _tts_ok="no"
+    if (cd "$_TTS_TMPD" && "$VENV_PY" -m mlx_audio.tts.generate \
+            --model mlx-community/Kokoro-82M-bf16 \
+            --text "test" \
+            --voice af_heart \
+            --speed 1.00 \
+            --lang_code a \
+            --file_prefix speak11 \
+            --audio_format wav \
+            --join_audio >/dev/null 2>&1) && [ -s "$_TTS_TMPD/speak11.wav" ]; then
+        _tts_ok="yes"
+    fi
+    rm -rf "$_TTS_TMPD"
+    check "local TTS generates speak11.wav" "yes" "$_tts_ok"
+fi
+
+# ── 34. TTS daemon (tts_server.py) ────────────────────────────
+section "TTS daemon"
+
+TTS_SERVER="$SCRIPT_DIR/tts_server.py"
+
+check "tts_server.py exists" \
+    "yes" "$([ -f "$TTS_SERVER" ] && echo "yes" || echo "no")"
+
+check "tts_server.py: valid Python syntax" \
+    "yes" "$(python3 -c "import ast; ast.parse(open('$TTS_SERVER').read())" 2>/dev/null && echo "yes" || echo "no")"
+
+check "tts_server.py: Unix socket (AF_UNIX)" \
+    "yes" "$(grep -q 'AF_UNIX' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: idle timeout logic" \
+    "yes" "$(grep -q 'IDLE_TIMEOUT' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: SIGTERM signal handling" \
+    "yes" "$(grep -q 'SIGTERM' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: PID file management" \
+    "yes" "$(grep -q 'tts_server.pid' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: socket cleanup on shutdown" \
+    "yes" "$(grep -q 'os.unlink(SOCKET_PATH)' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: flock prevents multiple daemons" \
+    "yes" "$(grep -q 'fcntl.flock' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "speak.sh: run_local_tts references daemon socket" \
+    "yes" "$(grep -q 'TTS_SOCK' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: daemon fallback to direct invocation" \
+    "yes" "$(grep -q 'falling back to direct invocation' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: start_tts_daemon function exists" \
+    "yes" "$(grep -q 'start_tts_daemon' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "uninstall.command: kills TTS daemon" \
+    "yes" "$(grep -q 'tts_server.pid' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
+
+check "tts_server.py: --managed mode support" \
+    "yes" "$(grep -q '\-\-managed' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: parent watchdog for orphan detection" \
+    "yes" "$(grep -q 'parent_watchdog' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: pipeline warmup" \
+    "yes" "$(grep -q 'warmup_pipeline' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "install.command: tts_server.py symlinked" \
+    "yes" "$(grep -q 'tts_server.py' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "uninstall.command: removes tts_server.py symlink" \
+    "yes" "$(grep -q 'tts_server.py' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
+
+check "Speak11Settings.swift: startTTSDaemon method" \
+    "yes" "$(grep -q 'startTTSDaemon' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Speak11Settings.swift: stopTTSDaemon method" \
+    "yes" "$(grep -q 'stopTTSDaemon' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Speak11Settings.swift: applicationWillTerminate stops daemon" \
+    "yes" "$(grep -q 'applicationWillTerminate' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# ── 35. Per-backend speed settings ──────────────────────────────
+section "Per-backend speed"
+
+check "speak.sh: LOCAL_SPEED variable defined" \
+    "yes" "$(grep -q 'LOCAL_SPEED=' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: local TTS uses LOCAL_SPEED" \
+    "yes" "$(grep -q '_SPEED=\"\$LOCAL_SPEED\"' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "Speak11Settings.swift: localSpeed config field" \
+    "yes" "$(grep -q 'localSpeed' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Speak11Settings.swift: pickLocalSpeed handler" \
+    "yes" "$(grep -q 'pickLocalSpeed' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Speak11Settings.swift: LOCAL_SPEED in config save" \
+    "yes" "$(grep -q 'LOCAL_SPEED' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Speak11Settings.swift: default local voice is bf_lily" \
+    "yes" "$(grep -q 'bf_lily' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "speak.sh: default local voice is bf_lily" \
+    "yes" "$(grep -q 'bf_lily' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "install.command: default local voice is bf_lily" \
+    "yes" "$(grep -q 'bf_lily' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "install.command: LOCAL_SPEED in default config" \
+    "yes" "$(grep -q 'LOCAL_SPEED' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "tts_server.py: warmup uses bf_lily" \
+    "yes" "$(grep -q 'bf_lily' "$TTS_SERVER" && echo "yes" || echo "no")"
 
 # ── Summary ──────────────────────────────────────────────────────
 

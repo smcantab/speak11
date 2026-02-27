@@ -13,7 +13,7 @@ trap cleanup EXIT
 # ── Keep terminal in the background — user interacts via dialogs ──
 osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
 
-result=$(osascript -e 'button returned of (display dialog "This will completely remove Speak11:\n\n  • Stop and remove the menu bar app\n  • Remove Accessibility permission\n  • Remove the speak script\n  • Remove the Services workflow\n  • Remove settings and config\n  • Remove the API key from Keychain\n  • Remove the login item (if set)" with title "Speak11" buttons {"Cancel", "Uninstall"} default button "Cancel" with icon caution)' 2>/dev/null)
+result=$(osascript -e 'button returned of (display dialog "This will completely remove Speak11:\n\n  • Stop and remove the menu bar app\n  • Remove Accessibility permission\n  • Remove the speak script\n  • Remove the Services workflow\n  • Remove settings and config\n  • Remove the local TTS environment\n  • Remove the API key from Keychain\n  • Remove the login item (if set)" with title "Speak11" buttons {"Cancel", "Uninstall"} default button "Cancel" with icon caution)' 2>/dev/null)
 [ "$result" = "Uninstall" ] || exit 0
 
 # ── Show terminal with progress ──────────────────────────────────
@@ -42,9 +42,10 @@ step "Accessibility permission removed"
 rm -rf "$HOME/Applications/Speak11 Settings.app"
 step "App bundle removed"
 
-# ── Remove the speak script symlink ───────────────────────────────
+# ── Remove script symlinks ───────────────────────────────────────
 rm -f "$HOME/.local/bin/speak.sh"
-step "Script symlink removed"
+rm -f "$HOME/.local/bin/tts_server.py"
+step "Script symlinks removed"
 
 # ── Remove the Services workflow ──────────────────────────────────
 rm -rf "$HOME/Library/Services/Speak Selection.workflow"
@@ -53,6 +54,20 @@ step "Quick Action removed"
 # ── Remove config directory ───────────────────────────────────────
 rm -rf "$HOME/.config/speak11"
 step "Config removed"
+
+# ── Kill TTS daemon if running ───────────────────────────────────
+if [ -f "$HOME/.local/share/speak11/tts_server.pid" ]; then
+    _daemon_pid=$(cat "$HOME/.local/share/speak11/tts_server.pid" 2>/dev/null)
+    if [ -n "$_daemon_pid" ] && kill -0 "$_daemon_pid" 2>/dev/null; then
+        if ps -p "$_daemon_pid" -o args= 2>/dev/null | grep -q tts_server; then
+            kill "$_daemon_pid" 2>/dev/null || true
+        fi
+    fi
+fi
+
+# ── Remove local TTS data (venv, daemon, standalone Python) ────
+rm -rf "$HOME/.local/share/speak11"
+step "Local TTS data removed"
 
 # ── Remove API key from Keychain ──────────────────────────────────
 security delete-generic-password \
@@ -67,4 +82,4 @@ step "Login item removed"
 printf '\n  \033[32mSpeak11 has been removed.\033[0m\n\n'
 
 # ── Done ──────────────────────────────────────────────────────────
-osascript -e 'display dialog "Speak11 has been removed.\n\nIf you assigned a Services keyboard shortcut, remove it manually:\nSystem Settings → Keyboard → Keyboard Shortcuts → Services\n\nIf you installed mlx-audio for local TTS, remove it with:\npip3 uninstall mlx-audio" with title "Speak11" buttons {"Done"} default button "Done" with icon note' 2>/dev/null
+osascript -e 'display dialog "Speak11 has been removed.\n\nIf you assigned a Services keyboard shortcut, remove it manually:\nSystem Settings → Keyboard → Keyboard Shortcuts → Services" with title "Speak11" buttons {"Done"} default button "Done" with icon note' 2>/dev/null

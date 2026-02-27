@@ -19,24 +19,21 @@
 ## Requirements
 
 - macOS Ventura (13) or later
-- `curl` and `afplay` — both ship with macOS, nothing to install
-- **ElevenLabs mode:** a free [ElevenLabs account](https://elevenlabs.io) and API key
-- **Local mode:** Apple Silicon (M1 or later) and python3
+- **Cloud TTS:** a free [ElevenLabs account](https://elevenlabs.io) and API key
+- **Local TTS:** Apple Silicon (M1 or later) — Python is downloaded automatically if needed
 
 ## Installation
 
 1. [Download the repository](../../archive/refs/heads/main.zip) and unzip it
 2. Double-click **`install.command`**
-3. Click **Continue**, then choose your TTS backend:
-   - **ElevenLabs Only** — cloud API, needs an API key
-   - **Both** — cloud + local fallback (recommended on Apple Silicon)
-   - **Local Only** — free, offline, no API key needed (Apple Silicon only)
-4. If you chose ElevenLabs or Both, paste your API key
-5. Click **Install** when prompted about the settings app — this adds the menu bar icon and registers `⌥⇧/` as a global hotkey
+3. Click **Continue**, then paste your ElevenLabs API key (or **Skip** on Apple Silicon to use free local TTS only)
+4. Click **Install** when prompted about the settings app — this adds the menu bar icon and registers `⌥⇧/` as a global hotkey
+
+On Apple Silicon, local TTS (mlx-audio + Kokoro) is installed automatically for free offline use.
 
 > **Getting your API key:** sign in at [elevenlabs.io](https://elevenlabs.io) → click your profile icon → **Profile + API Key** → copy the key.
 
-> **Local TTS note:** the Kokoro voice model (~350 MB) is downloaded during installation. If you chose ElevenLabs Only and later install local TTS via the quota prompt, the model downloads at that time.
+> **Local TTS note:** if no Python 3.10+ is found on your system, a standalone Python (~17 MB) is downloaded automatically. The Kokoro voice model (~350 MB) is also downloaded during installation.
 
 ### First use
 
@@ -51,9 +48,7 @@ Your API key is stored in your macOS Keychain — never written to a file.
 
 ## Settings
 
-Click the **waveform icon** in the menu bar. The menu adapts to the active backend — you only see settings that apply.
-
-When both backends are installed, **Backend** appears at the top of the menu to switch between them.
+Click the **waveform icon** in the menu bar. The menu adapts to your setup — you only see settings that apply. Use the **Backend** submenu to switch between **Auto** (cloud + local fallback), **ElevenLabs** (cloud only), and **Local** (offline only).
 
 ### ElevenLabs settings
 
@@ -71,9 +66,8 @@ When both backends are installed, **Backend** appears at the top of the menu to 
 
 | Setting | Options |
 |---------|---------|
-| **Voice** | 12 curated English voices |
+| **Voice** | 12 curated English voices (American and British) |
 | **Speed** | 0.5× to 2× |
-| **Language** | American English · British English · Spanish · French · Italian |
 
 Settings take effect immediately — no restart needed.
 
@@ -95,7 +89,8 @@ You can also enter any voice ID from the [ElevenLabs Voice Library](https://elev
 
 | Name | Style |
 |------|-------|
-| Heart | Warm (default) |
+| Lily | British, bright (default) |
+| Heart | Warm |
 | Bella | Soft |
 | Nova | Confident |
 | Sarah | Gentle |
@@ -105,7 +100,6 @@ You can also enter any voice ID from the [ElevenLabs Voice Library](https://elev
 | Eric | Steady |
 | Michael | Warm |
 | Emma | British, warm |
-| Lily | British, bright |
 | George | British, deep |
 
 ## Uninstall
@@ -142,7 +136,7 @@ Double-click **`uninstall.command`** — it removes everything including the Acc
 Settings are saved to `~/.config/speak11/config`. You can edit this file directly:
 
 ```bash
-TTS_BACKEND="elevenlabs"
+TTS_BACKEND="auto"
 TTS_BACKENDS_INSTALLED="both"
 VOICE_ID="pFZP5JQG7iQjIQuC4Bku"
 MODEL_ID="eleven_flash_v2_5"
@@ -151,8 +145,8 @@ SIMILARITY_BOOST="0.75"
 STYLE="0.00"
 USE_SPEAKER_BOOST="true"
 SPEED="1.00"
-LOCAL_VOICE="af_heart"
-LOCAL_LANG="a"
+LOCAL_VOICE="bf_lily"
+LOCAL_SPEED="1.00"
 ```
 
 ### Environment variables
@@ -163,9 +157,8 @@ Environment variables take highest priority and override both the config file an
 export ELEVENLABS_API_KEY="your-api-key"       # overrides Keychain
 export ELEVENLABS_VOICE_ID="your-voice-id"
 export ELEVENLABS_MODEL_ID="eleven_multilingual_v2"
-export TTS_BACKEND="local"                     # "elevenlabs" or "local"
+export TTS_BACKEND="local"                     # "auto" (default), "elevenlabs", or "local"
 export LOCAL_VOICE="am_adam"                   # Kokoro voice ID
-export LOCAL_LANG="b"                          # language code (a, b, e, f, i)
 ```
 
 ### Voice IDs
