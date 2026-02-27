@@ -30,12 +30,14 @@ printf '  ───────────────────────\
 step() { printf '  \033[32m✓\033[0m  %s\n' "$1"; }
 
 # ── Quit the menu bar app ─────────────────────────────────────────
-pkill -x "Speak11Settings" 2>/dev/null || true
+pkill -x "Speak11" 2>/dev/null || true
+pkill -x "Speak11Settings" 2>/dev/null || true  # legacy binary name
 sleep 0.5
 step "Menu bar app stopped"
 
 # ── Remove Accessibility permission ───────────────────────────────
-tccutil reset Accessibility com.speak11.settings 2>/dev/null || true
+tccutil reset Accessibility com.speak11.app 2>/dev/null || true
+tccutil reset Accessibility com.speak11.settings 2>/dev/null || true  # legacy bundle ID
 step "Accessibility permission removed"
 
 # ── Remove the app bundle ─────────────────────────────────────────

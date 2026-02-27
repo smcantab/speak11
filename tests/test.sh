@@ -9,7 +9,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SPEAK_SH="$SCRIPT_DIR/speak.sh"
-SETTINGS_SWIFT="$SCRIPT_DIR/Speak11Settings.swift"
+SETTINGS_SWIFT="$SCRIPT_DIR/Speak11.swift"
 FAST=false
 [[ "${1:-}" == "--fast" ]] && FAST=true
 
@@ -280,7 +280,7 @@ check "bash syntax valid" "0" "$(bash -n "$SCRIPT_DIR/uninstall.command" 2>/dev/
 
 # ── 10. Swift source structure ────────────────────────────────────
 
-section "Speak11Settings.swift structure"
+section "Speak11.swift structure"
 
 # Respeak support methods
 check "Swift: handleHotkey method exists" \
@@ -316,7 +316,7 @@ check "Swift: pickVoice calls scheduleRespeak" \
 
 # ── 11. Swift compile (slow ~15s) ────────────────────────────────
 
-section "Speak11Settings.swift compile"
+section "Speak11.swift compile"
 
 if $FAST; then
     printf "  SKIP  (--fast mode)\n"
@@ -1361,13 +1361,13 @@ check "install.command: tts_server.py symlinked" \
 check "uninstall.command: removes tts_server.py symlink" \
     "yes" "$(grep -q 'tts_server.py' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
 
-check "Speak11Settings.swift: startTTSDaemon method" \
+check "Speak11.swift: startTTSDaemon method" \
     "yes" "$(grep -q 'startTTSDaemon' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11Settings.swift: stopTTSDaemon method" \
+check "Speak11.swift: stopTTSDaemon method" \
     "yes" "$(grep -q 'stopTTSDaemon' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11Settings.swift: applicationWillTerminate stops daemon" \
+check "Speak11.swift: applicationWillTerminate stops daemon" \
     "yes" "$(grep -q 'applicationWillTerminate' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
 # ── 35. Per-backend speed settings ──────────────────────────────
@@ -1391,16 +1391,16 @@ check "speak.sh: local TTS uses LOCAL_SPEED" \
 check "speak.sh: python3 check skipped for local-only mode" \
     "yes" "$(grep -q 'TTS_BACKEND.*!=.*local.*python3' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "Speak11Settings.swift: localSpeed config field" \
+check "Speak11.swift: localSpeed config field" \
     "yes" "$(grep -q 'localSpeed' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11Settings.swift: pickLocalSpeed handler" \
+check "Speak11.swift: pickLocalSpeed handler" \
     "yes" "$(grep -q 'pickLocalSpeed' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11Settings.swift: LOCAL_SPEED in config save" \
+check "Speak11.swift: LOCAL_SPEED in config save" \
     "yes" "$(grep -q 'LOCAL_SPEED' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11Settings.swift: default local voice is bf_lily" \
+check "Speak11.swift: default local voice is bf_lily" \
     "yes" "$(grep -q 'bf_lily' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
 check "speak.sh: default local voice is bf_lily" \
