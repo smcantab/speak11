@@ -80,6 +80,9 @@ if [ -z "${TEXT//[[:space:]]/}" ]; then
     exit 0
 fi
 
+# Strip invalid Unicode (unpaired surrogates from PDFs, etc.)
+TEXT=$(printf '%s' "$TEXT" | iconv -f UTF-8 -t UTF-8//IGNORE)
+
 # Save text for live settings preview (position-aware respeak)
 printf '%s' "$TEXT" > "$TEXT_FILE"
 
