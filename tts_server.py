@@ -83,8 +83,17 @@ def warmup_pipeline():
         log(f"warmup failed (non-fatal): {e}")
 
 
-def generate_audio(text, voice, speed, lang_code):
-    """Generate a WAV file from text.  Returns the file path."""
+class CancelledError(Exception):
+    """Raised when a generation is cancelled (client disconnected)."""
+    pass
+
+
+def generate_audio(text, voice, speed, lang_code, cancel_check=None):
+    """Generate a WAV file from text.  Returns the file path.
+
+    cancel_check: optional callable that returns True if the client has
+    disconnected and generation should be aborted early.
+    """
     import gc
 
     import mlx.core as mx
@@ -105,6 +114,8 @@ def generate_audio(text, voice, speed, lang_code):
         segments = []
         sample_rate = None
         for result in results:
+            if cancel_check and cancel_check():
+                raise CancelledError("client disconnected")
             segments.append(np.array(result.audio))
             sample_rate = result.sample_rate
 
@@ -137,6 +148,21 @@ def generate_audio(text, voice, speed, lang_code):
 # ── Client handler ───────────────────────────────────────────────────
 
 
+def _client_gone(conn):
+    """Non-blocking check: has the client closed the connection?"""
+    import select
+    try:
+        readable, _, _ = select.select([conn], [], [], 0)
+        if readable:
+            # If the socket is readable, either data arrived (unexpected)
+            # or the client closed the connection (recv returns b"").
+            data = conn.recv(1, socket.MSG_PEEK)
+            return len(data) == 0
+        return False
+    except OSError:
+        return True
+
+
 def handle_client(conn):
     """Read one JSON request, generate audio, send JSON response."""
     global last_request_time
@@ -164,12 +190,17 @@ def handle_client(conn):
 
         log(f"request: text_len={len(text)} voice={voice} speed={speed} lang={lang_code}")
 
-        audio_file = generate_audio(text, voice, speed, lang_code)
+        audio_file = generate_audio(
+            text, voice, speed, lang_code,
+            cancel_check=lambda: _client_gone(conn),
+        )
 
         response = json.dumps({"status": "ok", "audio_file": audio_file})
         conn.sendall((response + "\n").encode("utf-8"))
         log(f"response: {audio_file}")
 
+    except CancelledError:
+        log("generation cancelled (client disconnected)")
     except Exception as e:
         log(f"error: {e}\n{traceback.format_exc()}")
         try:
@@ -314,11 +345,14 @@ def main():
     mode_str = "managed" if managed_mode else f"idle timeout {IDLE_TIMEOUT}s"
     log(f"listening on {SOCKET_PATH} ({mode_str})")
 
-    # Accept loop
+    # Accept loop — each client runs in a thread so a new request can
+    # cancel a long-running generation (the hotkey toggle kills the old
+    # speak.sh, whose connection drops, and the new request proceeds).
     while not shutdown_event.is_set():
         try:
             conn, _ = server_socket.accept()
-            handle_client(conn)
+            t = threading.Thread(target=handle_client, args=(conn,), daemon=True)
+            t.start()
         except socket.timeout:
             continue
         except OSError:
