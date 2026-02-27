@@ -1415,6 +1415,25 @@ check "install.command: LOCAL_SPEED in default config" \
 check "tts_server.py: warmup uses bf_lily" \
     "yes" "$(grep -q 'bf_lily' "$TTS_SERVER" && echo "yes" || echo "no")"
 
+# ── 33. MLX memory management ───────────────────────────────────
+
+section "MLX memory management"
+
+check "tts_server.py: clears MLX metal cache after generation" \
+    "yes" "$(grep -q 'mx.metal.clear_cache()' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: runs gc.collect after generation" \
+    "yes" "$(grep -q 'gc.collect()' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: imports mlx.core in generate_audio" \
+    "yes" "$(grep -q 'import mlx.core' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: deletes segments and audio arrays" \
+    "yes" "$(grep -q 'del segments, audio' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "tts_server.py: clears cache on error path too" \
+    "yes" "$(awk '/except Exception/,/raise/' "$TTS_SERVER" | grep -q 'clear_cache' && echo "yes" || echo "no")"
+
 # ── Summary ──────────────────────────────────────────────────────
 
 printf "\n────────────────────────────────────────────\n"
