@@ -53,6 +53,7 @@ last_request_time = time.time()
 server_socket = None
 shutdown_event = threading.Event()
 managed_mode = False
+generation_lock = threading.Lock()
 
 # ── Model ────────────────────────────────────────────────────────────
 
@@ -190,10 +191,11 @@ def handle_client(conn):
 
         log(f"request: text_len={len(text)} voice={voice} speed={speed} lang={lang_code}")
 
-        audio_file = generate_audio(
-            text, voice, speed, lang_code,
-            cancel_check=lambda: _client_gone(conn),
-        )
+        with generation_lock:
+            audio_file = generate_audio(
+                text, voice, speed, lang_code,
+                cancel_check=lambda: _client_gone(conn),
+            )
 
         response = json.dumps({"status": "ok", "audio_file": audio_file})
         conn.sendall((response + "\n").encode("utf-8"))
