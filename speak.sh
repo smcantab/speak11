@@ -59,8 +59,19 @@ STATUS_FILE="${TMPDIR:-/tmp}/speak11_status"
 if [ -f "$PID_FILE" ]; then
     OLD_PID=$(cat "$PID_FILE" 2>/dev/null)
     if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+        # Kill children first (curl, python, afplay) so bash can handle SIGTERM
+        pkill -P "$OLD_PID" 2>/dev/null
         kill "$OLD_PID" 2>/dev/null
-        rm -f "$PID_FILE"
+        # Wait for process to die (up to 0.5s)
+        for _i in 1 2 3 4 5; do
+            kill -0 "$OLD_PID" 2>/dev/null || break
+            sleep 0.1
+        done
+        # Force-kill if still alive (e.g. stuck in subprocess)
+        kill -0 "$OLD_PID" 2>/dev/null && kill -9 "$OLD_PID" 2>/dev/null
+        # Only remove PID file if it still belongs to the process we killed
+        # (a new instance may have started and written its PID while we waited)
+        [ -f "$PID_FILE" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$OLD_PID" ] && rm -f "$PID_FILE"
         exit 0
     fi
     rm -f "$PID_FILE"  # stale PID, clean up and continue
@@ -112,16 +123,53 @@ fi
 TMP_FILE=""
 TMP_DIR=""
 PLAY_PID=""
+_CURL_PID=""
+_DAEMON_PID=""
+_PREV_TMP_FILE=""
+_PREV_TMP_DIR=""
+
+# Write our PID so the toggle can kill the entire process (not just afplay).
+echo "$$" > "$PID_FILE"
 
 cleanup() {
     set +e  # bash 3.2: trap failures override exit code under set -e
-    rm -f "$TMP_FILE" "$PID_FILE"
-    [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
+    # Kill all child processes (afplay, curl, python subprocesses)
+    [ -n "$_CURL_PID" ] && kill "$_CURL_PID" 2>/dev/null
+    # Daemon request/direct fallback runs in a subshell — kill its children
+    # (python3) first, then the subshell itself.
+    [ -n "$_DAEMON_PID" ] && { pkill -P "$_DAEMON_PID" 2>/dev/null; kill "$_DAEMON_PID" 2>/dev/null; }
     [ -n "$PLAY_PID" ] && kill "$PLAY_PID" 2>/dev/null
+    pkill -P $$ 2>/dev/null
+    rm -f "$TMP_FILE" "$_PREV_TMP_FILE" "${TMP_FILE}.code"
+    [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
+    [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
+    # Only remove PID file if it's ours (another instance may have overwritten it)
+    [ -f "$PID_FILE" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$$" ] && rm -f "$PID_FILE"
 }
-trap cleanup EXIT INT TERM
+# EXIT: clean up on normal exit. INT/TERM: clean up AND exit immediately
+# (without `exit`, bash resumes after the trap handler → script keeps running).
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── Sentence splitter ────────────────────────────────────────────
+# Split text into sentences for streaming playback. Uses whichever
+# python is available (VENV_PYTHON for local-only, system python3 otherwise).
+split_sentences() {
+    local py="${VENV_PYTHON:-python3}"
+    [ -x "$py" ] || py=python3
+    "$py" -c "
+import re, sys
+text = sys.stdin.read().strip()
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+for p in parts:
+    p = p.strip()
+    if p:
+        print(p)
+" <<< "$1" 2>/dev/null || printf '%s\n' "$1"
+}
 
 # ── Local TTS helper ────────────────────────────────────────────
 # Generates audio using mlx-audio / Kokoro. Sets TMP_FILE on success.
@@ -133,6 +181,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PYTHON="${VENV_PYTHON:-$HOME/.local/share/speak11/venv/bin/python3}"
 
 LOG_FILE="$HOME/.local/share/speak11/tts.log"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
 TTS_SOCK="${TTS_SOCK:-$HOME/.local/share/speak11/tts.sock}"
 
 # Start the TTS daemon if not already running.
@@ -205,7 +254,6 @@ else:
 }
 
 run_local_tts() {
-    rm -f "$TMP_FILE"  # clean up ElevenLabs temp file if falling back
     local PY="${VENV_PYTHON}"
     [ -x "$PY" ] || PY=python3  # fallback to system python
     {
@@ -213,22 +261,33 @@ run_local_tts() {
         echo "PY=$PY  VOICE=${LOCAL_VOICE:-bf_lily}  SPEED=$LOCAL_SPEED"
     } >> "$LOG_FILE" 2>/dev/null
 
-    # Try the persistent daemon (model stays loaded → near-instant)
+    # Run a daemon request in background so `wait` is interruptible by SIGTERM
+    # (same pattern as curl — bash 3.2 defers signals during foreground $()).
+    # Sets caller's `audio_file` on success via dynamic scoping.
+    _daemon_request_bg() {
+        local _req_out
+        _req_out=$(mktemp "${TMPDIR:-/tmp/}speak11_req_XXXXXXXXXX") || return 1
+        _SOCK="$TTS_SOCK" _VOICE="${LOCAL_VOICE:-bf_lily}" \
+            _SPEED="$LOCAL_SPEED" _LANG="${LOCAL_VOICE:0:1}" \
+            tts_daemon_request "$PY" > "$_req_out" 2>> "$LOG_FILE" &
+        _DAEMON_PID=$!
+        wait "$_DAEMON_PID" 2>/dev/null
+        [ $? -eq 0 ] && audio_file=$(cat "$_req_out" 2>/dev/null)
+        _DAEMON_PID=""
+        rm -f "$_req_out"
+    }
+
     local audio_file=""
 
     # Attempt 1: connect to existing daemon
     if [ -S "$TTS_SOCK" ]; then
-        audio_file=$(_SOCK="$TTS_SOCK" _VOICE="${LOCAL_VOICE:-bf_lily}" \
-            _SPEED="$LOCAL_SPEED" _LANG="${LOCAL_VOICE:0:1}" \
-            tts_daemon_request "$PY" 2>> "$LOG_FILE") || true
+        _daemon_request_bg
     fi
 
     # Attempt 2: start daemon and retry
     if [ -z "$audio_file" ] || [ ! -s "$audio_file" ]; then
         if start_tts_daemon "$PY" 2>> "$LOG_FILE"; then
-            audio_file=$(_SOCK="$TTS_SOCK" _VOICE="${LOCAL_VOICE:-bf_lily}" \
-                _SPEED="$LOCAL_SPEED" _LANG="${LOCAL_VOICE:0:1}" \
-                tts_daemon_request "$PY" 2>> "$LOG_FILE") || true
+            _daemon_request_bg
         fi
     fi
 
@@ -251,50 +310,51 @@ run_local_tts() {
         --lang_code "${LOCAL_VOICE:0:1}" \
         --file_prefix speak11 \
         --audio_format wav \
-        --join_audio 2>> "$LOG_FILE")
+        --join_audio 2>> "$LOG_FILE") &
+    _DAEMON_PID=$!
+    wait "$_DAEMON_PID" 2>/dev/null
+    _DAEMON_PID=""
     TMP_FILE="$TMP_DIR/speak11.wav"
     [ -s "$TMP_FILE" ]
 }
 
 # ── Play audio helper ──────────────────────────────────────────
-# Writes playback status (for live settings preview), then plays the audio.
+# Starts playback in the background. Call wait_audio before the next play_audio.
+# This overlap lets the next sentence generate while the current one plays.
 play_audio() {
     local duration
     duration=$(afinfo "$TMP_FILE" 2>/dev/null | awk '/estimated duration/{print $3}')
     printf '%s\n%s\n' "$(date +%s)" "${duration:-0}" > "$STATUS_FILE"
     afplay "$TMP_FILE" &
     PLAY_PID=$!
-    echo "$PLAY_PID" > "$PID_FILE"
-    wait "$PLAY_PID"
 }
 
-# ── Generate audio ───────────────────────────────────────────────
-
-if [ "$TTS_BACKEND" = "local" ]; then
-    # ── Local TTS (mlx-audio / Kokoro) ───────────────────────────
-    if ! run_local_tts; then
-        osascript -e 'display dialog "Local TTS generation failed." & return & return & "Re-run the Speak11 installer to repair the local TTS setup." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
-        exit 1
+wait_audio() {
+    if [ -n "$PLAY_PID" ]; then
+        wait "$PLAY_PID" 2>/dev/null || true
+        PLAY_PID=""
     fi
-else
-    # ── ElevenLabs (cloud API) ───────────────────────────────────
+}
 
-    # Escape text for JSON — python3 handles arbitrary Unicode safely
-    JSON_TEXT=$(python3 -c "import json, sys; print(json.dumps(sys.stdin.read()))" <<< "$TEXT")
+# ── ElevenLabs single-sentence helper ─────────────────────────────
+# Sends one sentence to the ElevenLabs API. Sets TMP_FILE on success.
+# Returns 0 on success, 1 on failure. Sets HTTP_CODE and CURL_EXIT.
+#
+# curl runs in the background so that SIGTERM can interrupt the `wait`
+# immediately — bash 3.2 cannot handle signals while a foreground
+# command substitution ($()) is running.
+run_elevenlabs_tts() {
+    local sentence="$1"
+    JSON_TEXT=$(python3 -c "import json, sys; print(json.dumps(sys.stdin.read()))" <<< "$sentence")
     if [ $? -ne 0 ] || [ -z "$JSON_TEXT" ]; then
-        osascript -e 'display dialog "Failed to encode the selected text as JSON." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
-        exit 1
+        return 1
     fi
 
     TMP_FILE=$(mktemp "${TMPDIR:-/tmp/}speak11_tts_XXXXXXXXXX")
-    if [ -z "$TMP_FILE" ] || [ ! -f "$TMP_FILE" ]; then
-        osascript -e 'display dialog "Failed to create a temporary file. Check that /tmp is writable." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
-        exit 1
-    fi
+    [ -z "$TMP_FILE" ] || [ ! -f "$TMP_FILE" ] && return 1
 
-    # Capture both curl exit code and HTTP response code
-    set +e
-    HTTP_CODE=$(curl -s -w "%{http_code}" \
+    local code_file="${TMP_FILE}.code"
+    curl -s -w "%{http_code}" \
         --max-time 30 \
         -o "$TMP_FILE" \
         -X POST \
@@ -311,69 +371,125 @@ else
                 \"use_speaker_boost\": ${USE_SPEAKER_BOOST},
                 \"speed\": ${SPEED}
             }
-        }")
+        }" > "$code_file" &
+    _CURL_PID=$!
+    wait "$_CURL_PID" 2>/dev/null
     CURL_EXIT=$?
-    set -e
+    _CURL_PID=""
+    HTTP_CODE=$(cat "$code_file" 2>/dev/null)
+    rm -f "$code_file"
+    [ $CURL_EXIT -eq 0 ] && [ "$HTTP_CODE" = "200" ] && [ -s "$TMP_FILE" ]
+}
 
-    # ── Network failure (offline, DNS, timeout) ──────────────────
-    if [ $CURL_EXIT -ne 0 ] || [ -z "$HTTP_CODE" ] || [ "$HTTP_CODE" = "000" ]; then
-        if [ "$TTS_BACKENDS_INSTALLED" = "both" ]; then
-            if run_local_tts; then
-                play_audio
-                exit 0
-            fi
-            # Local fallback also failed (e.g. model not yet downloaded)
-            osascript -e 'display dialog "Could not reach ElevenLabs, and local TTS also failed." & return & return & "The Kokoro model may need to download first — try again while online." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+# ── Generate and play audio (sentence by sentence) ───────────────
+# Split text into sentences so:
+#   - Local: first sentence plays quickly (avoids long phonemization)
+#   - Cloud: only played sentences are billed (cancel saves credits)
+_SENTENCES=$(split_sentences "$TEXT")
+
+if [ "$TTS_BACKEND" = "local" ]; then
+    # ── Local TTS (mlx-audio / Kokoro) ───────────────────────────
+    # Pipeline: generate next sentence while the current one plays,
+    # so there is no audible gap between sentences.
+    _SAVED_TEXT="$TEXT"
+    _FIRST=true
+    while IFS= read -r _SENTENCE; do
+        [ -z "$_SENTENCE" ] && continue
+        TEXT="$_SENTENCE"
+        run_local_tts
+        _ok=$?
+        if $_FIRST && [ $_ok -ne 0 ]; then
+            osascript -e 'display dialog "Local TTS generation failed." & return & return & "Re-run the Speak11 installer to repair the local TTS setup." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
             exit 1
         fi
-        osascript -e 'display dialog "Could not reach ElevenLabs." & return & return & "Check your internet connection, or install local TTS for offline use." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
-        exit 1
-    fi
-
-    # ── HTTP 429 (quota exceeded) ────────────────────────────────
-    if [ "$HTTP_CODE" = "429" ]; then
-        # If both backends are installed, fall back silently
-        if [ "$TTS_BACKENDS_INSTALLED" = "both" ]; then
-            if run_local_tts; then
-                play_audio
-                exit 0
-            fi
-            # Local fallback also failed
-            osascript -e 'display dialog "ElevenLabs quota exceeded, and local TTS also failed." & return & return & "Re-run the Speak11 installer to repair the local TTS setup." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
-            exit 1
+        if [ $_ok -eq 0 ]; then
+            wait_audio
+            [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
+            [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
+            _FIRST=false
+            _PREV_TMP_FILE="$TMP_FILE"
+            _PREV_TMP_DIR="$TMP_DIR"
+            play_audio
         fi
-        # ElevenLabs only — offer to install local TTS
-        if [ "$(uname -m)" = "arm64" ]; then
-            QUOTA_RESULT=$(osascript -e 'button returned of (display dialog "You'\''ve hit your ElevenLabs quota." & return & return & "Install mlx-audio for free local TTS, or upgrade your ElevenLabs plan." with title "Speak11" buttons {"Not Now", "Install Local TTS"} default button "Install Local TTS" with icon caution)' 2>/dev/null || true)
-            if [ "$QUOTA_RESULT" = "Install Local TTS" ]; then
-                if bash "$SCRIPT_DIR/install-local.sh" 2>/dev/null; then
-                    osascript -e 'display dialog "Local TTS installed and ready." & return & return & "Future requests will fall back to local when ElevenLabs is unavailable." with title "Speak11" buttons {"OK"} default button "OK"' 2>/dev/null
-                    if run_local_tts; then
-                        play_audio
-                    fi
-                else
-                    osascript -e 'display dialog "Could not install local TTS." & return & return & "An internet connection is required for the first install.\nPlease check your connection and try again." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+    done <<< "$_SENTENCES"
+    wait_audio
+    TEXT="$_SAVED_TEXT"
+else
+    # ── ElevenLabs (cloud API) ───────────────────────────────────
+    # Pipeline: generate next sentence while the current one plays.
+    _FIRST=true
+    while IFS= read -r _SENTENCE; do
+        [ -z "$_SENTENCE" ] && continue
+        if ! run_elevenlabs_tts "$_SENTENCE"; then
+            if $_FIRST; then
+                break  # fall through to error handling below
+            fi
+            break  # mid-stream failure, stop silently
+        fi
+        wait_audio
+        [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
+        _FIRST=false
+        _PREV_TMP_FILE="$TMP_FILE"
+        play_audio
+    done <<< "$_SENTENCES"
+    wait_audio
+
+    # If the first sentence failed, handle the error (429, network, etc.)
+    if $_FIRST; then
+        # ── Network failure (offline, DNS, timeout) ──────────────
+        if [ $CURL_EXIT -ne 0 ] || [ -z "$HTTP_CODE" ] || [ "$HTTP_CODE" = "000" ]; then
+            if [ "$TTS_BACKENDS_INSTALLED" = "both" ]; then
+                rm -f "$TMP_FILE"; TMP_FILE=""
+                if run_local_tts; then
+                    play_audio
+                    wait_audio
+                    exit 0
                 fi
+                osascript -e 'display dialog "Could not reach ElevenLabs, and local TTS also failed." & return & return & "The Kokoro model may need to download first — try again while online." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+                exit 1
             fi
-            exit 1  # user already saw the quota dialog
+            osascript -e 'display dialog "Could not reach ElevenLabs." & return & return & "Check your internet connection, or install local TTS for offline use." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+            exit 1
         fi
-        # Intel Mac — fall through to generic error handler
-    fi
 
-    # ── Handle other errors ──────────────────────────────────────
-    if [ "$HTTP_CODE" != "200" ]; then
-        SAFE_ERROR=$(cat "$TMP_FILE" 2>/dev/null \
-            | head -c 300 \
-            | tr -d '\000-\037"\\')
-        osascript -e "display dialog \"ElevenLabs API error (HTTP ${HTTP_CODE}):\" & return & return & \"${SAFE_ERROR:-Unknown error}\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon caution"
-        exit 1
-    fi
+        # ── HTTP 429 (quota exceeded) ────────────────────────────
+        if [ "$HTTP_CODE" = "429" ]; then
+            if [ "$TTS_BACKENDS_INSTALLED" = "both" ]; then
+                rm -f "$TMP_FILE"; TMP_FILE=""
+                if run_local_tts; then
+                    play_audio
+                    wait_audio
+                    exit 0
+                fi
+                osascript -e 'display dialog "ElevenLabs quota exceeded, and local TTS also failed." & return & return & "Re-run the Speak11 installer to repair the local TTS setup." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+                exit 1
+            fi
+            if [ "$(uname -m)" = "arm64" ]; then
+                QUOTA_RESULT=$(osascript -e 'button returned of (display dialog "You'\''ve hit your ElevenLabs quota." & return & return & "Install mlx-audio for free local TTS, or upgrade your ElevenLabs plan." with title "Speak11" buttons {"Not Now", "Install Local TTS"} default button "Install Local TTS" with icon caution)' 2>/dev/null || true)
+                if [ "$QUOTA_RESULT" = "Install Local TTS" ]; then
+                    if bash "$SCRIPT_DIR/install-local.sh" 2>/dev/null; then
+                        osascript -e 'display dialog "Local TTS installed and ready." & return & return & "Future requests will fall back to local when ElevenLabs is unavailable." with title "Speak11" buttons {"OK"} default button "OK"' 2>/dev/null
+                        rm -f "$TMP_FILE"; TMP_FILE=""
+                        if run_local_tts; then
+                            play_audio
+                            wait_audio
+                            exit 0
+                        fi
+                    else
+                        osascript -e 'display dialog "Could not install local TTS." & return & return & "An internet connection is required for the first install.\nPlease check your connection and try again." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+                    fi
+                fi
+                exit 1
+            fi
+        fi
 
-    if [ ! -s "$TMP_FILE" ]; then
-        osascript -e 'display dialog "ElevenLabs returned an empty audio response." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
-        exit 1
+        # ── Handle other errors ──────────────────────────────────
+        if [ "$HTTP_CODE" != "200" ]; then
+            SAFE_ERROR=$(cat "$TMP_FILE" 2>/dev/null \
+                | head -c 300 \
+                | tr -d '\000-\037"\\')
+            osascript -e "display dialog \"ElevenLabs API error (HTTP ${HTTP_CODE}):\" & return & return & \"${SAFE_ERROR:-Unknown error}\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon caution"
+            exit 1
+        fi
     fi
 fi
-
-# ── Play audio ─────────────────────────────────────────────────────
-play_audio

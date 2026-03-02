@@ -1386,6 +1386,9 @@ check "Speak11.swift: stopTTSDaemon method" \
 check "Speak11.swift: applicationWillTerminate stops daemon" \
     "yes" "$(grep -q 'applicationWillTerminate' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
+check "Speak11.swift: applicationWillTerminate kills current process" \
+    "yes" "$(awk '/applicationWillTerminate/,/^    }/' "$SETTINGS_SWIFT" | grep -q 'killCurrentProcess' && echo "yes" || echo "no")"
+
 # ── 35. Per-backend speed settings ──────────────────────────────
 section "Per-backend speed"
 
@@ -1538,6 +1541,1259 @@ check "speak.sh: unmutes system audio on confirmation" \
 
 check "speak.sh: mute check exits on Cancel" \
     "yes" "$(grep -q 'exit 0' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# ── 39. Sentence-by-sentence generation ──────────────────────────
+
+section "Sentence-by-sentence generation"
+
+check "speak.sh: split_sentences function exists" \
+    "yes" "$(grep -q 'split_sentences()' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: split_sentences uses regex on sentence boundaries" \
+    "yes" "$(grep -q 're.split' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: local path loops over sentences" \
+    "yes" "$(awk '/TTS_BACKEND.*=.*local/,/^else/' "$SPEAK_SH" | grep -q 'while.*read.*_SENTENCE' && echo "yes" || echo "no")"
+
+check "speak.sh: cloud path loops over sentences" \
+    "yes" "$(awk '/ElevenLabs.*cloud/,/^fi/' "$SPEAK_SH" | grep -q 'while.*read.*_SENTENCE' && echo "yes" || echo "no")"
+
+check "speak.sh: run_elevenlabs_tts function exists" \
+    "yes" "$(grep -q 'run_elevenlabs_tts()' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Functional tests for sentence splitting
+_SPLIT_PY="${VENV_PYTHON:-python3}"
+[ -x "$_SPLIT_PY" ] || _SPLIT_PY=python3
+
+check "split: single sentence unchanged" \
+    "Hello world." "$("$_SPLIT_PY" -c "
+import re, sys
+text = sys.stdin.read().strip()
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+for p in parts:
+    p = p.strip()
+    if p: print(p)
+" <<< "Hello world.")"
+
+check "split: two sentences produce two lines" \
+    "2" "$("$_SPLIT_PY" -c "
+import re, sys
+text = sys.stdin.read().strip()
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+c=0
+for p in parts:
+    if p.strip(): c+=1
+print(c)
+" <<< "First sentence. Second sentence.")"
+
+check "split: preserves text within sentences" \
+    "First sentence." "$("$_SPLIT_PY" -c "
+import re, sys
+text = sys.stdin.read().strip()
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+for p in parts:
+    p = p.strip()
+    if p: print(p); break
+" <<< "First sentence. Second sentence.")"
+
+check "split: handles question marks" \
+    "2" "$("$_SPLIT_PY" -c "
+import re, sys
+text = sys.stdin.read().strip()
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+c=0
+for p in parts:
+    if p.strip(): c+=1
+print(c)
+" <<< "What time is it? It is noon.")"
+
+check "split: handles exclamation marks" \
+    "2" "$("$_SPLIT_PY" -c "
+import re, sys
+text = sys.stdin.read().strip()
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+c=0
+for p in parts:
+    if p.strip(): c+=1
+print(c)
+" <<< "Wow! That is great.")"
+
+check "split: no split mid-sentence" \
+    "1" "$("$_SPLIT_PY" -c "
+import re, sys
+text = sys.stdin.read().strip()
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+c=0
+for p in parts:
+    if p.strip(): c+=1
+print(c)
+" <<< "Hello world without punctuation")"
+
+# ── 40. PID and toggle mechanism ─────────────────────────────────
+
+section "PID and toggle mechanism"
+
+check "speak.sh: stores own PID in PID file" \
+    "yes" "$(grep -q 'echo "\$\$" > "\$PID_FILE"' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: cleanup kills PLAY_PID" \
+    "yes" "$(grep -q 'kill "\$PLAY_PID"' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: play_audio does NOT write to PID file" \
+    "no" "$(awk '/^play_audio\(\)/,/^}/' "$SPEAK_SH" | grep -q 'PID_FILE' && echo "yes" || echo "no")"
+
+check "speak.sh: toggle reads PID file and kills process" \
+    "yes" "$(grep -q 'kill "\$OLD_PID"' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# ── 41. Audio pipeline (overlapping generation and playback) ──────
+
+section "Audio pipeline (overlapping generation and playback)"
+
+# play_audio must be non-blocking (start afplay, don't wait)
+check "play_audio is non-blocking (no wait inside)" \
+    "0" "$(awk '/^play_audio\(\)/,/^}/' "$SPEAK_SH" | grep -c 'wait')"
+
+# wait_audio function must exist
+check "wait_audio() defined" \
+    "yes" "$(grep -q '^wait_audio()' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# wait_audio must wait for PLAY_PID
+check "wait_audio waits for PLAY_PID" \
+    "yes" "$(awk '/^wait_audio\(\)/,/^}/' "$SPEAK_SH" | grep -q 'wait.*PLAY_PID' && echo "yes" || echo "no")"
+
+# Pipeline: previous temp file tracking
+check "_PREV_TMP_FILE initialized" \
+    "yes" "$(grep -q '_PREV_TMP_FILE=""' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "_PREV_TMP_DIR initialized" \
+    "yes" "$(grep -q '_PREV_TMP_DIR=""' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Cleanup must handle previous temp files (from the pipeline)
+check "cleanup removes _PREV_TMP_FILE" \
+    "yes" "$(awk '/^cleanup\(\)/,/^}/' "$SPEAK_SH" | grep -q '_PREV_TMP_FILE' && echo "yes" || echo "no")"
+
+check "cleanup removes _PREV_TMP_DIR" \
+    "yes" "$(awk '/^cleanup\(\)/,/^}/' "$SPEAK_SH" | grep -q '_PREV_TMP_DIR' && echo "yes" || echo "no")"
+
+# Local sentence loop: wait_audio before play_audio (pipeline pattern)
+_LOCAL_LOOP=$(awk '/TTS_BACKEND.*=.*local/,/^else/' "$SPEAK_SH")
+check "local loop: calls wait_audio" \
+    "yes" "$(echo "$_LOCAL_LOOP" | grep -q 'wait_audio' && echo "yes" || echo "no")"
+
+check "local loop: wait_audio before play_audio" \
+    "yes" "$(echo "$_LOCAL_LOOP" | awk '/wait_audio/{found=1} /play_audio/{if(found) {print "yes"; exit}}' | head -1)"
+
+check "local loop: final wait_audio after loop" \
+    "yes" "$(awk '/done <<< "\$_SENTENCES"/,/TEXT="\$_SAVED_TEXT"/' "$SPEAK_SH" | grep -q 'wait_audio' && echo "yes" || echo "no")"
+
+# Cloud sentence loop: wait_audio before play_audio (pipeline pattern)
+_CLOUD_LOOP=$(awk '/ElevenLabs.*cloud/,/done <<< "\$_SENTENCES"/' "$SPEAK_SH")
+check "cloud loop: calls wait_audio" \
+    "yes" "$(echo "$_CLOUD_LOOP" | grep -q 'wait_audio' && echo "yes" || echo "no")"
+
+check "cloud loop: wait_audio before play_audio" \
+    "yes" "$(echo "$_CLOUD_LOOP" | awk '/wait_audio/{found=1} /play_audio/{if(found) {print "yes"; exit}}' | head -1)"
+
+check "cloud loop: final wait_audio after loop" \
+    "yes" "$(awk '/done <<< "\$_SENTENCES"/{n++} n==2,/\$_FIRST/{if(/wait_audio/){print "yes"; exit}}' "$SPEAK_SH" | head -1)"
+
+# Fallback paths must call wait_audio after play_audio
+# (network failure fallback, 429 fallback, install-local fallback)
+_FALLBACK_SECTION=$(awk '/first sentence failed/,/^fi$/' "$SPEAK_SH")
+_FALLBACK_PLAY_COUNT=$(echo "$_FALLBACK_SECTION" | grep -c 'play_audio' || true)
+_FALLBACK_WAIT_COUNT=$(echo "$_FALLBACK_SECTION" | grep -c 'wait_audio' || true)
+check "fallback paths: wait_audio after every play_audio" \
+    "yes" "$([ "$_FALLBACK_PLAY_COUNT" -gt 0 ] && [ "$_FALLBACK_WAIT_COUNT" -ge "$_FALLBACK_PLAY_COUNT" ] && echo "yes" || echo "no")"
+
+# Previous temp file cleanup in loops
+check "local loop: cleans up _PREV_TMP_FILE" \
+    "yes" "$(echo "$_LOCAL_LOOP" | grep -q '_PREV_TMP_FILE' && echo "yes" || echo "no")"
+
+check "cloud loop: cleans up _PREV_TMP_FILE" \
+    "yes" "$(echo "$_CLOUD_LOOP" | grep -q '_PREV_TMP_FILE' && echo "yes" || echo "no")"
+
+# ── 42. Daemon generation lock (thread safety) ──────────────────
+
+section "Daemon generation lock"
+
+TTS_SERVER="$SCRIPT_DIR/tts_server.py"
+
+check "daemon defines generation_lock" \
+    "yes" "$(grep -q 'generation_lock' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "daemon uses threading.Lock for generation" \
+    "yes" "$(grep -q 'threading.Lock' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "daemon wraps generate_audio with lock" \
+    "yes" "$(grep -q 'with generation_lock' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# ── 43. Signal handling and cleanup robustness ───────────────────
+
+section "Signal handling and cleanup robustness"
+
+# cleanup() must disable set -e (bash 3.2 trap quirk)
+check "cleanup disables set -e" \
+    "yes" "$(awk '/^cleanup\(\)/,/^}/' "$SPEAK_SH" | grep -q 'set +e' && echo "yes" || echo "no")"
+
+# cleanup handles empty PLAY_PID (guarded by -n)
+check "cleanup guards PLAY_PID with -n" \
+    "yes" "$(awk '/^cleanup\(\)/,/^}/' "$SPEAK_SH" | grep -q '\[ -n "\$PLAY_PID" \]' && echo "yes" || echo "no")"
+
+# Separate traps: EXIT for normal cleanup, INT/TERM for signal cleanup + explicit exit
+# (bash resumes execution after a trap handler unless the handler calls exit)
+check "trap cleanup EXIT" \
+    "yes" "$(grep -q 'trap cleanup EXIT$' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "trap INT exits 130" \
+    "yes" "$(grep -q "trap 'cleanup; exit 130' INT" "$SPEAK_SH" && echo "yes" || echo "no")"
+check "trap TERM exits 143" \
+    "yes" "$(grep -q "trap 'cleanup; exit 143' TERM" "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# cleanup only removes PID_FILE if it's ours (prevents clobbering a new instance)
+check "cleanup conditionally removes own PID_FILE" \
+    "yes" "$(awk '/^cleanup\(\)/,/^}/' "$SPEAK_SH" | grep -q 'cat "\$PID_FILE".*\$\$' && echo "yes" || echo "no")"
+
+# ── 44. set -e containment ──────────────────────────────────────
+
+section "set -e containment"
+
+# run_elevenlabs_tts must NOT leak set -e to the global scope.
+# The script has no global set -e, so the function must not call set -e.
+_EL_FUNC=$(awk '/^run_elevenlabs_tts\(\)/,/^}/' "$SPEAK_SH")
+check "run_elevenlabs_tts: does not contain set -e (no leak)" \
+    "0" "$(echo "$_EL_FUNC" | grep -c 'set -e' || true)"
+
+# ── 45. PID file safety ──────────────────────────────────────────
+
+section "PID file safety"
+
+# Toggle checks if process exists (kill -0) before killing
+check "toggle does kill -0 before kill" \
+    "yes" "$(grep -q 'kill -0 "\$OLD_PID"' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Toggle kills children first (curl, python, afplay) so bash can handle SIGTERM
+check "toggle uses pkill -P to kill children first" \
+    "yes" "$(grep -q 'pkill -P "\$OLD_PID"' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Toggle only kills if process is alive (kill follows kill -0 check)
+check "toggle kill is inside if kill -0 block" \
+    "yes" "$(grep -A 5 'kill -0.*OLD_PID.*then' "$SPEAK_SH" | grep -q 'kill "\$OLD_PID"' && echo "yes" || echo "no")"
+
+# Toggle waits for old process to die before proceeding
+check "toggle waits for old process to die" \
+    "yes" "$(grep -A 8 'pkill -P "\$OLD_PID"' "$SPEAK_SH" | grep -q 'sleep 0.1' && echo "yes" || echo "no")"
+
+# Toggle force-kills if process still alive after grace period
+check "toggle force-kills (kill -9) as fallback" \
+    "yes" "$(grep -q 'kill -9 "\$OLD_PID"' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Toggle only removes PID file if it still belongs to the killed process
+# (prevents race: new instance writes PID while toggle waits for old to die)
+check "toggle conditionally removes PID (checks OLD_PID)" \
+    "yes" "$(awk '/pkill -P.*OLD_PID/,/exit 0/' "$SPEAK_SH" | grep -q 'cat "\$PID_FILE".*OLD_PID' && echo "yes" || echo "no")"
+
+# PID file stores $$ (speak.sh PID, not afplay PID)
+check "PID file stores \$\$ (shell PID)" \
+    "yes" "$(grep -q 'echo "\$\$" > "\$PID_FILE"' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Stale PID file is cleaned up (process not running)
+check "stale PID file cleaned on dead process" \
+    "yes" "$(awk '/kill -0.*OLD_PID/,/fi/{next} /rm -f.*PID_FILE/' "$SPEAK_SH" | head -1 | grep -q 'rm' && echo "yes" || echo "no")"
+
+# Cleanup uses pkill -P to kill all children
+check "cleanup uses pkill -P \$\$ to kill all children" \
+    "yes" "$(awk '/^cleanup\(\)/,/^}/' "$SPEAK_SH" | grep -q 'pkill -P \$\$' && echo "yes" || echo "no")"
+
+# _DAEMON_PID tracked in shared state (local TTS daemon requests)
+check "_DAEMON_PID initialized in shared state" \
+    "yes" "$(grep -q '^_DAEMON_PID=""' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# cleanup kills _DAEMON_PID's children (python3 inside subshell) then the subshell
+check "cleanup kills _DAEMON_PID children (pkill -P + kill)" \
+    "yes" "$(awk '/^cleanup\(\)/,/^}/' "$SPEAK_SH" | grep -q 'pkill -P "\$_DAEMON_PID"' && echo "yes" || echo "no")"
+
+# curl runs in background + wait (interruptible by SIGTERM)
+check "curl runs in background (& + wait)" \
+    "yes" "$(awk '/^run_elevenlabs_tts\(\)/,/^}/' "$SPEAK_SH" | grep -q '_CURL_PID=\$!' && echo "yes" || echo "no")"
+
+# Daemon request runs in background + wait (interruptible by SIGTERM)
+check "daemon request runs in background (& + wait)" \
+    "yes" "$(awk '/^run_local_tts\(\)/,/^}/' "$SPEAK_SH" | grep -q '_DAEMON_PID=\$!' && echo "yes" || echo "no")"
+
+# Direct fallback runs in background + wait
+check "direct fallback runs in background (& + wait)" \
+    "yes" "$(awk '/^run_local_tts\(\)/,/^}/' "$SPEAK_SH" | grep -q 'join_audio.*) &' && echo "yes" || echo "no")"
+
+# Log directory is created if missing
+check "log dir created with mkdir -p" \
+    "yes" "$(grep -q 'mkdir -p.*dirname.*LOG_FILE' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# ── 46. Sentence splitting edge cases ────────────────────────────
+
+section "Sentence splitting edge cases"
+
+_SPLIT_PY="${VENV_PYTHON:-python3}"
+[ -x "$_SPLIT_PY" ] || _SPLIT_PY=python3
+
+_run_split() {
+    "$_SPLIT_PY" -c "
+import re, sys
+text = sys.stdin.read().strip()
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+for p in parts:
+    p = p.strip()
+    if p: print(p)
+" <<< "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+# Single word, no punctuation → one line
+check "split: single word" \
+    "1" "$(echo "$(_run_split "Hello")" | wc -l | tr -d ' ')"
+
+# Embedded newlines → split respects them
+check "split: embedded newlines" \
+    "2" "$(echo "$(_run_split "Line one.
+Line two.")" | wc -l | tr -d ' ')"
+
+# Glob characters preserved (no expansion)
+check "split: glob chars preserved" \
+    "What*" "$(echo "$(_run_split "What*")" | head -1)"
+
+# Text with only punctuation
+check "split: punctuation-only text" \
+    "1" "$(echo "$(_run_split "...")" | wc -l | tr -d ' ')"
+
+# Unicode text (no ASCII punctuation) → one sentence
+check "split: CJK without ASCII punctuation stays together" \
+    "1" "$(echo "$(_run_split "这是一个测试")" | wc -l | tr -d ' ')"
+
+# The regex splits on ". " — abbreviations like "Mr." get split.
+# This is a known limitation. Verify the split happens (not a bug).
+check "split: abbreviation Mr. splits (known limitation)" \
+    "2" "$(echo "$(_run_split "Mr. Smith went home.")" | wc -l | tr -d ' ')"
+
+# Semicolons and colons split
+check "split: semicolons split" \
+    "2" "$(echo "$(_run_split "First part; second part.")" | wc -l | tr -d ' ')"
+
+# Multiple whitespace between sentences
+check "split: double space between sentences" \
+    "2" "$(echo "$(_run_split "First.  Second.")" | wc -l | tr -d ' ')"
+
+# split_sentences has a fallback if python fails
+check "split_sentences has fallback on python failure" \
+    "yes" "$(grep -q '|| printf' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# ── 47. Temp file lifecycle ──────────────────────────────────────
+
+section "Temp file lifecycle"
+
+# run_local_tts must NOT delete TMP_FILE (the pipeline loop handles cleanup
+# via _PREV_TMP_FILE — deleting here races with afplay opening the file)
+check "run_local_tts does NOT delete TMP_FILE at start" \
+    "no" "$(awk '/^run_local_tts\(\)/,/^}/' "$SPEAK_SH" | head -5 | grep -q 'rm -f "\$TMP_FILE"' && echo "yes" || echo "no")"
+
+# ElevenLabs: mktemp failure returns 1
+check "run_elevenlabs_tts: mktemp failure returns 1" \
+    "yes" "$(awk '/^run_elevenlabs_tts\(\)/,/^}/' "$SPEAK_SH" | grep -q '\[ -z "\$TMP_FILE" \].*return 1' && echo "yes" || echo "no")"
+
+# Daemon generate_audio: tmp_dir is assigned BEFORE the try block
+# (so it's in scope in the except handler)
+check "daemon generate_audio: tmp_dir assigned before try" \
+    "yes" "$(python3 -c "
+import ast
+with open('$TTS_SERVER') as f:
+    tree = ast.parse(f.read())
+for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef) and node.name == 'generate_audio':
+        body = node.body
+        # Find tmp_dir assignment and try block positions
+        tmp_dir_line = None
+        try_line = None
+        for stmt in body:
+            if isinstance(stmt, ast.Assign):
+                for t in stmt.targets:
+                    if isinstance(t, ast.Name) and t.id == 'tmp_dir':
+                        tmp_dir_line = stmt.lineno
+            if isinstance(stmt, ast.Try) and try_line is None:
+                try_line = stmt.lineno
+        if tmp_dir_line and try_line and tmp_dir_line < try_line:
+            print('yes')
+        else:
+            print('no')
+        break
+else:
+    print('no')
+" 2>/dev/null || echo "no")"
+
+# Daemon: CancelledError caught by except Exception in generate_audio
+check "daemon: CancelledError inherits from Exception" \
+    "yes" "$(grep -q 'class CancelledError(Exception)' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# Daemon: orphaned temp cleanup on startup
+check "daemon cleans speak11_tts_ dirs on startup" \
+    "yes" "$(grep -q "speak11_tts_" "$TTS_SERVER" && grep -q 'shutil.rmtree' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# Daemon: handle_client closes connection in finally block
+check "daemon: connection closed in finally" \
+    "yes" "$(grep -A 3 'finally:' "$TTS_SERVER" | grep -q 'conn.close' && echo "yes" || echo "no")"
+
+# STATUS_FILE is NOT removed in cleanup — it persists for the Swift app
+# to read the last playback timestamp. Stale data is benign (the app checks age).
+check "cleanup does NOT remove STATUS_FILE (persists for app)" \
+    "no" "$(awk '/^cleanup\(\)/,/^}/' "$SPEAK_SH" | grep -q 'STATUS_FILE' && echo "yes" || echo "no")"
+
+# ── 48. Pipeline state edge cases ────────────────────────────────
+
+section "Pipeline state edge cases"
+
+# wait_audio is safe when PLAY_PID is empty (guarded by -n)
+check "wait_audio guards empty PLAY_PID" \
+    "yes" "$(awk '/^wait_audio\(\)/,/^}/' "$SPEAK_SH" | grep -q '\[ -n "\$PLAY_PID" \]' && echo "yes" || echo "no")"
+
+# wait_audio clears PLAY_PID after waiting (prevents double-kill)
+check "wait_audio clears PLAY_PID" \
+    "yes" "$(awk '/^wait_audio\(\)/,/^}/' "$SPEAK_SH" | grep -q 'PLAY_PID=""' && echo "yes" || echo "no")"
+
+# wait_audio uses || true (handles non-zero exit from afplay)
+check "wait_audio tolerates afplay failure (|| true)" \
+    "yes" "$(awk '/^wait_audio\(\)/,/^}/' "$SPEAK_SH" | grep -q '|| true' && echo "yes" || echo "no")"
+
+# _FIRST flag: local path shows error dialog only on first sentence failure
+check "local loop: error dialog only on first sentence" \
+    "yes" "$(awk '/TTS_BACKEND.*=.*local/,/^else/' "$SPEAK_SH" | grep -q '\$_FIRST.*_ok.*-ne 0' && echo "yes" || echo "no")"
+
+# _FIRST flag: cloud path breaks to error handler only on first sentence
+check "cloud loop: break to error handler only on _FIRST" \
+    "yes" "$(awk '/ElevenLabs.*cloud/,/done/' "$SPEAK_SH" | grep -q 'if \$_FIRST' && echo "yes" || echo "no")"
+
+# Single sentence works: wait_audio after loop catches it
+check "pipeline handles single sentence (wait_audio after loop)" \
+    "yes" "$(awk '/done <<< "\$_SENTENCES"/{found++} found==1 && /wait_audio/{print "yes"; exit}' "$SPEAK_SH" | head -1)"
+
+# ── 49. Cloud TTS failure modes ──────────────────────────────────
+
+section "Cloud TTS failure modes"
+
+# curl has --max-time timeout
+check "curl has --max-time for timeout protection" \
+    "yes" "$(awk '/^run_elevenlabs_tts/,/^}/' "$SPEAK_SH" | grep -q 'max-time' && echo "yes" || echo "no")"
+
+# Mid-stream cloud failure stops silently (no dialog)
+check "cloud mid-stream failure: no osascript dialog" \
+    "yes" "$(awk '/mid-stream failure/,/break/' "$SPEAK_SH" | grep -qv 'osascript' && echo "yes" || echo "no")"
+
+# Fallback: network failure with both backends → tries local
+check "network failure + both: runs run_local_tts" \
+    "yes" "$(awk '/Network failure/,/HTTP 429/' "$SPEAK_SH" | grep -q 'run_local_tts' && echo "yes" || echo "no")"
+
+# Fallback: 429 with both backends → tries local
+check "429 + both: runs run_local_tts" \
+    "yes" "$(awk '/HTTP 429/,/Handle other/' "$SPEAK_SH" | grep -q 'run_local_tts' && echo "yes" || echo "no")"
+
+# JSON encoding failure: CURL_EXIT/HTTP_CODE uninitialized.
+# The error handler checks [ -z "$HTTP_CODE" ] which catches this.
+check "error handler catches unset HTTP_CODE (JSON failure)" \
+    "yes" "$(awk '/first sentence failed/,/fi$/' "$SPEAK_SH" | grep -q '\-z "\$HTTP_CODE"' && echo "yes" || echo "no")"
+
+# ── 50. Local TTS failure modes ──────────────────────────────────
+
+section "Local TTS failure modes"
+
+# Daemon client socket read timeout
+check "daemon client socket timeout" \
+    "yes" "$(grep -q 'conn.settimeout' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# run_local_tts: fallback to direct invocation when daemon unavailable
+check "run_local_tts: fallback to direct mlx invocation" \
+    "yes" "$(awk '/^run_local_tts/,/^}/' "$SPEAK_SH" | grep -q 'mlx_audio.tts.generate' && echo "yes" || echo "no")"
+
+# Daemon: cancel_check called between segments in the generation loop
+check "daemon: cancel_check between segments" \
+    "yes" "$(grep -A 2 'for result in results' "$TTS_SERVER" | grep -q 'cancel_check' && echo "yes" || echo "no")"
+
+# Daemon: CancelledError handler logs but does not crash
+check "daemon: CancelledError handler in handle_client" \
+    "yes" "$(grep -q 'except CancelledError' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# Daemon: metal cache cleared on both success and error paths
+_CACHE_CLEAR_COUNT=$(grep -c 'clear_cache' "$TTS_SERVER" || true)
+check "daemon: mx.metal.clear_cache in both success and error paths" \
+    "yes" "$([ "$_CACHE_CLEAR_COUNT" -ge 2 ] && echo "yes" || echo "no")"
+
+# Daemon: gc.collect in both success and error paths
+_GC_COUNT=$(grep -c 'gc.collect' "$TTS_SERVER" || true)
+check "daemon: gc.collect in both success and error paths" \
+    "yes" "$([ "$_GC_COUNT" -ge 2 ] && echo "yes" || echo "no")"
+
+# ── 51. Functional: toggle kills entire process tree ──────────────
+
+section "Functional: toggle and rapid invocation"
+
+_TESTTMP=$(mktemp -d "${TMPDIR:-/tmp}/speak11_test_XXXXXXXXXX")
+
+# Simulate toggle: PID file with running process → kills children + parent
+(
+    set +e  # match speak.sh behavior (no set -e)
+    # Start a background sleep to simulate speak.sh
+    sleep 30 &
+    _SIM_PID=$!
+
+    _PID_FILE="$_TESTTMP/speak11_tts.pid"
+    echo "$_SIM_PID" > "$_PID_FILE"
+
+    # New invocation: read PID, kill children first, then parent
+    OLD_PID=$(cat "$_PID_FILE" 2>/dev/null)
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+        pkill -P "$OLD_PID" 2>/dev/null
+        kill "$OLD_PID" 2>/dev/null
+        for _i in 1 2 3 4 5; do
+            kill -0 "$OLD_PID" 2>/dev/null || break
+            sleep 0.1
+        done
+        kill -0 "$OLD_PID" 2>/dev/null && kill -9 "$OLD_PID" 2>/dev/null
+        rm -f "$_PID_FILE"
+    fi
+    # Verify the process is dead
+    sleep 0.1
+    kill -0 "$_SIM_PID" 2>/dev/null && echo "alive" || echo "dead"
+) > "$_TESTTMP/toggle_result" 2>/dev/null
+check "toggle kills previous process" \
+    "dead" "$(cat "$_TESTTMP/toggle_result")"
+
+# Simulate stale PID (process not running) → clean up and proceed
+(
+    _PID_FILE="$_TESTTMP/speak11_tts2.pid"
+    echo "99999999" > "$_PID_FILE"  # PID that doesn't exist
+    if [ -f "$_PID_FILE" ]; then
+        OLD_PID=$(cat "$_PID_FILE" 2>/dev/null)
+        if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+            echo "would_kill"
+        else
+            rm -f "$_PID_FILE"
+            echo "cleaned_stale"
+        fi
+    fi
+) > "$_TESTTMP/stale_result" 2>/dev/null
+check "stale PID file: cleaned up, no kill sent" \
+    "cleaned_stale" "$(cat "$_TESTTMP/stale_result")"
+
+# Rapid triple-invoke: B kills A (with pkill+wait), C sees no PID file
+(
+    set +e  # match speak.sh behavior (no set -e)
+    _PID_FILE="$_TESTTMP/speak11_tts3.pid"
+
+    # Instance A: starts running
+    sleep 30 &
+    A_PID=$!
+    echo "$A_PID" > "$_PID_FILE"
+
+    # Instance B: toggle-kills A with new robust mechanism
+    OLD_PID=$(cat "$_PID_FILE" 2>/dev/null)
+    pkill -P "$OLD_PID" 2>/dev/null
+    kill "$OLD_PID" 2>/dev/null
+    for _i in 1 2 3 4 5; do
+        kill -0 "$OLD_PID" 2>/dev/null || break
+        sleep 0.1
+    done
+    kill -0 "$OLD_PID" 2>/dev/null && kill -9 "$OLD_PID" 2>/dev/null
+    rm -f "$_PID_FILE"
+
+    # Instance C: no PID file → proceeds normally
+    if [ -f "$_PID_FILE" ]; then
+        echo "found_pid"
+    else
+        echo "no_pid_proceeds"
+    fi
+
+    wait "$A_PID" 2>/dev/null || true
+) > "$_TESTTMP/rapid_result" 2>/dev/null
+check "rapid triple-invoke: third instance proceeds cleanly" \
+    "no_pid_proceeds" "$(cat "$_TESTTMP/rapid_result")"
+
+rm -rf "$_TESTTMP"
+
+# ── 52. Functional: cleanup on signal ────────────────────────────
+
+section "Functional: cleanup on signal"
+
+_TESTTMP=$(mktemp -d "${TMPDIR:-/tmp}/speak11_test_XXXXXXXXXX")
+
+# Simulate cleanup behavior: SIGTERM kills PLAY_PID and removes files
+(
+    TMP_FILE="$_TESTTMP/audio.wav"
+    PID_FILE="$_TESTTMP/tts.pid"
+    _PREV_TMP_FILE="$_TESTTMP/prev_audio.wav"
+    _PREV_TMP_DIR="$_TESTTMP/prev_dir"
+    TMP_DIR=""
+    STATUS_FILE="$_TESTTMP/status"
+
+    touch "$TMP_FILE" "$PID_FILE" "$_PREV_TMP_FILE" "$STATUS_FILE"
+    mkdir -p "$_PREV_TMP_DIR"
+
+    # Simulate afplay running in background
+    sleep 30 &
+    PLAY_PID=$!
+
+    # Write our own PID into the PID file (simulating a different instance's PID)
+    echo "999" > "$PID_FILE"
+
+    # Run cleanup (simulating trap — skip pkill -P in test to avoid killing
+    # test runner children; the pkill behavior is verified by structural checks)
+    set +e
+    [ -n "$PLAY_PID" ] && kill "$PLAY_PID" 2>/dev/null
+    rm -f "$TMP_FILE" "$_PREV_TMP_FILE"
+    [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
+    [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
+    # Only remove PID file if it's ours ($$=test runner, PID file says "999")
+    [ -f "$PID_FILE" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$$" ] && rm -f "$PID_FILE"
+
+    # Check what was cleaned
+    [ ! -f "$TMP_FILE" ] && echo "tmp_ok"
+    [ ! -f "$_PREV_TMP_FILE" ] && echo "prev_ok"
+    [ ! -d "$_PREV_TMP_DIR" ] && echo "prev_dir_ok"
+    kill -0 "$PLAY_PID" 2>/dev/null || echo "play_killed"
+    # PID file should NOT be removed (it contains "999", not $$)
+    [ -f "$PID_FILE" ] && echo "pid_preserved"
+
+    wait "$PLAY_PID" 2>/dev/null || true
+) > "$_TESTTMP/cleanup_result" 2>/dev/null
+
+check "cleanup: removes TMP_FILE" \
+    "yes" "$(grep -q 'tmp_ok' "$_TESTTMP/cleanup_result" && echo "yes" || echo "no")"
+check "cleanup: preserves PID_FILE owned by other instance" \
+    "yes" "$(grep -q 'pid_preserved' "$_TESTTMP/cleanup_result" && echo "yes" || echo "no")"
+check "cleanup: removes _PREV_TMP_FILE" \
+    "yes" "$(grep -q 'prev_ok' "$_TESTTMP/cleanup_result" && echo "yes" || echo "no")"
+check "cleanup: removes _PREV_TMP_DIR" \
+    "yes" "$(grep -q 'prev_dir_ok' "$_TESTTMP/cleanup_result" && echo "yes" || echo "no")"
+check "cleanup: kills PLAY_PID" \
+    "yes" "$(grep -q 'play_killed' "$_TESTTMP/cleanup_result" && echo "yes" || echo "no")"
+
+rm -rf "$_TESTTMP"
+
+# ── 53. Functional: pipeline ordering ─────────────────────────────
+
+section "Functional: pipeline overlap simulation"
+
+_TESTTMP=$(mktemp -d "${TMPDIR:-/tmp}/speak11_test_XXXXXXXXXX")
+
+# Simulate pipeline: generate, play, generate overlapping, wait, play
+(
+    PLAY_PID=""
+    _PREV_TMP_FILE=""
+    _TIMELINE=""
+
+    wait_audio() {
+        if [ -n "$PLAY_PID" ]; then
+            wait "$PLAY_PID" 2>/dev/null || true
+            PLAY_PID=""
+        fi
+    }
+    play_audio() {
+        sleep 0.05 &
+        PLAY_PID=$!
+    }
+    generate() {
+        _TIMELINE="${_TIMELINE}gen$1 "
+    }
+
+    # Sentence 1
+    generate 1
+    wait_audio  # no-op (first)
+    _PREV_TMP_FILE="file1"
+    play_audio
+    _TIMELINE="${_TIMELINE}play1 "
+
+    # Sentence 2 (generated while 1 plays)
+    generate 2
+    wait_audio  # waits for play1
+    _TIMELINE="${_TIMELINE}wait1 "
+    _PREV_TMP_FILE="file2"
+    play_audio
+    _TIMELINE="${_TIMELINE}play2 "
+
+    # Final wait
+    wait_audio
+    _TIMELINE="${_TIMELINE}wait2"
+
+    echo "$_TIMELINE"
+) > "$_TESTTMP/pipeline_result" 2>/dev/null
+
+check "pipeline ordering: gen1 play1 gen2 wait1 play2 wait2" \
+    "gen1 play1 gen2 wait1 play2 wait2" \
+    "$(cat "$_TESTTMP/pipeline_result" | tr -s ' ' | sed 's/ $//')"
+
+rm -rf "$_TESTTMP"
+
+# ── 54. Functional: sentence splitting with iconv ─────────────────
+
+section "Functional: iconv Unicode sanitization"
+
+# Valid UTF-8 passes through iconv unchanged
+_ICONV_VALID=$(printf 'Hello world' | iconv -f UTF-8 -t UTF-8//IGNORE 2>/dev/null)
+check "iconv: valid UTF-8 unchanged" \
+    "Hello world" "$_ICONV_VALID"
+
+# Empty input after iconv → empty output
+_ICONV_EMPTY=$(printf '' | iconv -f UTF-8 -t UTF-8//IGNORE 2>/dev/null)
+check "iconv: empty input → empty output" \
+    "" "$_ICONV_EMPTY"
+
+# Valid Unicode (accented chars) preserved
+_ICONV_ACCENT=$(printf 'café résumé' | iconv -f UTF-8 -t UTF-8//IGNORE 2>/dev/null)
+check "iconv: accented characters preserved" \
+    "café résumé" "$_ICONV_ACCENT"
+
+# iconv call present in speak.sh before any TTS processing
+check "iconv sanitization before TTS" \
+    "yes" "$(grep -q "iconv -f UTF-8 -t UTF-8//IGNORE" "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# ── 55. Daemon robustness ────────────────────────────────────────
+
+section "Daemon robustness"
+
+# Server listen backlog
+check "daemon: listen backlog >= 2" \
+    "yes" "$(grep -q 'server_socket.listen(2)' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# Daemon uses flock for single-instance guarantee
+check "daemon: flock for single instance" \
+    "yes" "$(grep -q 'fcntl.flock' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# Daemon writes PID file after acquiring lock
+check "daemon: PID file written after lock" \
+    "yes" "$(awk '/fcntl.flock/,/PID_FILE/' "$TTS_SERVER" | grep -q 'PID_FILE' && echo "yes" || echo "no")"
+
+# Daemon removes stale socket before binding
+check "daemon: removes stale socket" \
+    "yes" "$(awk '/Remove stale socket/,/pass/' "$TTS_SERVER" | grep -q 'os.unlink(SOCKET_PATH)' && echo "yes" || echo "no")"
+
+# Daemon socket has timeout (prevents blocking forever on accept)
+check "daemon: server_socket.settimeout" \
+    "yes" "$(grep -q 'server_socket.settimeout' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# Daemon shutdown cleans up socket and PID file
+check "daemon: shutdown removes socket and PID" \
+    "yes" "$(grep -A 15 'def do_shutdown' "$TTS_SERVER" | grep -q 'os.unlink' && echo "yes" || echo "no")"
+
+# Daemon: signal handlers for clean shutdown
+check "daemon: SIGTERM handler" \
+    "yes" "$(grep -q 'signal.SIGTERM' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+check "daemon: SIGINT handler" \
+    "yes" "$(grep -q 'signal.SIGINT' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# Daemon: managed mode has parent watchdog
+check "daemon: parent_watchdog for managed mode" \
+    "yes" "$(grep -q 'def parent_watchdog' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# Daemon: idle mode has idle watchdog
+check "daemon: idle_watchdog for standalone mode" \
+    "yes" "$(grep -q 'def idle_watchdog' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# Daemon: handle_client sends error response on exception
+check "daemon: error response sent to client on failure" \
+    "yes" "$(grep -q '"status": "error"' "$TTS_SERVER" && echo "yes" || echo "no")"
+
+# ── 56. Simulation: local pipeline with fake TTS ──────────────────
+
+section "Simulation: local pipeline with fake TTS"
+
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+_SIM_LOG="$_SIMDIR/play.log"
+_SIM_STATUS="$_SIMDIR/status"
+_SIM_PIDFILE="$_SIMDIR/tts.pid"
+
+# Create a fake TTS driver script that uses the actual pipeline logic from
+# speak.sh but replaces afplay/daemon with stubs that log what they do.
+cat > "$_SIMDIR/sim_local.sh" << 'SIMEOF'
+#!/bin/bash
+# Simulation: runs the local pipeline with fake TTS and fake afplay.
+# Receives TEXT via env, logs which sentences are played and in what order.
+_SIMDIR="$1"
+_SIM_LOG="$_SIMDIR/play.log"
+STATUS_FILE="$_SIMDIR/status"
+PID_FILE="$_SIMDIR/tts.pid"
+TMP_FILE=""
+TMP_DIR=""
+PLAY_PID=""
+_PREV_TMP_FILE=""
+_PREV_TMP_DIR=""
+_GEN_COUNT=0
+
+echo "$$" > "$PID_FILE"
+
+cleanup() {
+    set +e
+    pkill -P $$ 2>/dev/null
+    [ -n "$PLAY_PID" ] && kill "$PLAY_PID" 2>/dev/null
+    rm -f "$TMP_FILE" "$_PREV_TMP_FILE"
+    [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
+    [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
+    [ -f "$PID_FILE" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$$" ] && rm -f "$PID_FILE"
+}
+trap cleanup EXIT INT TERM
+
+split_sentences() {
+    python3 -c "
+import re, sys
+text = sys.stdin.read().strip()
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+for p in parts:
+    p = p.strip()
+    if p:
+        print(p)
+" <<< "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+# Fake run_local_tts: creates a WAV file (just text content for verification)
+run_local_tts() {
+    _GEN_COUNT=$((_GEN_COUNT + 1))
+    TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_gen_XXXXXXXXXX")
+    TMP_FILE="$TMP_DIR/speak11.wav"
+    printf '%s' "$TEXT" > "$TMP_FILE"
+    # Simulate generation time (10ms)
+    sleep 0.01
+    [ -s "$TMP_FILE" ]
+}
+
+# Fake play_audio: logs the sentence content, starts a brief background sleep
+play_audio() {
+    # Verify the file exists and is readable at play time
+    if [ ! -s "$TMP_FILE" ]; then
+        echo "ERROR:file_missing_at_play:$TMP_FILE" >> "$_SIM_LOG"
+        return
+    fi
+    local content
+    content=$(cat "$TMP_FILE")
+    echo "PLAY:$content" >> "$_SIM_LOG"
+    # Simulate playback (30ms)
+    sleep 0.03 &
+    PLAY_PID=$!
+}
+
+wait_audio() {
+    if [ -n "$PLAY_PID" ]; then
+        wait "$PLAY_PID" 2>/dev/null || true
+        PLAY_PID=""
+    fi
+}
+
+# ── Run the pipeline (mirrors speak.sh local loop) ──
+_SENTENCES=$(split_sentences "$TEXT")
+
+_SAVED_TEXT="$TEXT"
+_FIRST=true
+while IFS= read -r _SENTENCE; do
+    [ -z "$_SENTENCE" ] && continue
+    TEXT="$_SENTENCE"
+    run_local_tts
+    _ok=$?
+    if $_FIRST && [ $_ok -ne 0 ]; then
+        echo "ERROR:first_gen_failed" >> "$_SIM_LOG"
+        exit 1
+    fi
+    if [ $_ok -eq 0 ]; then
+        wait_audio
+        [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
+        [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
+        _FIRST=false
+        _PREV_TMP_FILE="$TMP_FILE"
+        _PREV_TMP_DIR="$TMP_DIR"
+        play_audio
+    fi
+done <<< "$_SENTENCES"
+wait_audio
+TEXT="$_SAVED_TEXT"
+
+echo "DONE:$_GEN_COUNT" >> "$_SIM_LOG"
+SIMEOF
+chmod +x "$_SIMDIR/sim_local.sh"
+
+# Test: multi-sentence text plays all sentences in order
+_SIM_TEXT="First sentence. Second sentence. Third sentence. Fourth sentence."
+TEXT="$_SIM_TEXT" bash "$_SIMDIR/sim_local.sh" "$_SIMDIR" 2>/dev/null
+
+check "sim-local: all 4 sentences played" \
+    "4" "$(grep -c '^PLAY:' "$_SIM_LOG" 2>/dev/null || true)"
+
+check "sim-local: sentence 1 played first" \
+    "yes" "$(sed -n '1p' "$_SIM_LOG" | grep -q 'PLAY:First sentence\.' && echo "yes" || echo "no")"
+
+check "sim-local: sentence 2 played second" \
+    "yes" "$(sed -n '2p' "$_SIM_LOG" | grep -q 'PLAY:Second sentence\.' && echo "yes" || echo "no")"
+
+check "sim-local: sentence 3 played third" \
+    "yes" "$(sed -n '3p' "$_SIM_LOG" | grep -q 'PLAY:Third sentence\.' && echo "yes" || echo "no")"
+
+check "sim-local: sentence 4 played fourth" \
+    "yes" "$(sed -n '4p' "$_SIM_LOG" | grep -q 'PLAY:Fourth sentence\.' && echo "yes" || echo "no")"
+
+check "sim-local: no file-missing errors" \
+    "0" "$(grep -c 'ERROR:file_missing' "$_SIM_LOG" 2>/dev/null || true)"
+
+check "sim-local: generation count matches sentence count" \
+    "yes" "$(grep -q 'DONE:4' "$_SIM_LOG" && echo "yes" || echo "no")"
+
+# Test: PID file cleaned up after normal completion
+check "sim-local: PID file removed after normal exit" \
+    "no" "$([ -f "$_SIM_PIDFILE" ] && echo "yes" || echo "no")"
+
+# Test with the user's real-world text that was failing
+rm -f "$_SIM_LOG"
+_SIM_TEXT='On this week'\''s episode of The David Frum Show, Atlantic staff writer David Frum opens with his take on President Trump'\''s reaction to a recent Supreme Court defeat on tariffs, arguing that the real issue is not just economics but the president'\''s drive for unchecked power.
+
+Then David is joined by Tim Miller of The Bulwark to unpack Tim'\''s recent trip to Minneapolis and what he saw on the ground amid ongoing ICE enforcement operations in the Twin Cities. They explore why younger Americans find "Resist libs" cringe and how that cynicism has helped fuel Trump'\''s politics. David and Tim also debate whether Never Trump conservatives are losing the core values that once defined them and whether that evolution is necessary in order to actually take on Trump.'
+
+TEXT="$_SIM_TEXT" bash "$_SIMDIR/sim_local.sh" "$_SIMDIR" 2>/dev/null
+
+_PLAY_COUNT=$(grep -c '^PLAY:' "$_SIM_LOG" 2>/dev/null || true)
+check "sim-local: real-world text plays all sentences (>=3)" \
+    "yes" "$([ "$_PLAY_COUNT" -ge 3 ] && echo "yes" || echo "no")"
+
+check "sim-local: real-world first sentence starts with 'On this'" \
+    "yes" "$(head -1 "$_SIM_LOG" | grep -q 'PLAY:On this' && echo "yes" || echo "no")"
+
+check "sim-local: real-world no errors" \
+    "0" "$(grep -c 'ERROR:' "$_SIM_LOG" 2>/dev/null || true)"
+
+rm -rf "$_SIMDIR"
+
+# ── 57. Simulation: cloud pipeline with fake curl ──────────────────
+
+section "Simulation: cloud pipeline with fake curl"
+
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+_SIM_LOG="$_SIMDIR/play.log"
+
+# Create a fake cloud TTS driver
+cat > "$_SIMDIR/sim_cloud.sh" << 'SIMEOF'
+#!/bin/bash
+_SIMDIR="$1"
+_SIM_LOG="$_SIMDIR/play.log"
+STATUS_FILE="$_SIMDIR/status"
+PID_FILE="$_SIMDIR/tts.pid"
+TMP_FILE=""
+PLAY_PID=""
+_PREV_TMP_FILE=""
+HTTP_CODE=""
+CURL_EXIT=0
+
+echo "$$" > "$PID_FILE"
+
+cleanup() {
+    set +e
+    pkill -P $$ 2>/dev/null
+    [ -n "$PLAY_PID" ] && kill "$PLAY_PID" 2>/dev/null
+    rm -f "$TMP_FILE" "$_PREV_TMP_FILE"
+    [ -f "$PID_FILE" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$$" ] && rm -f "$PID_FILE"
+}
+trap cleanup EXIT INT TERM
+
+split_sentences() {
+    python3 -c "
+import re, sys
+text = sys.stdin.read().strip()
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+for p in parts:
+    p = p.strip()
+    if p:
+        print(p)
+" <<< "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+# Fake run_elevenlabs_tts: creates a temp file with the sentence text
+run_elevenlabs_tts() {
+    local sentence="$1"
+    TMP_FILE=$(mktemp "${TMPDIR:-/tmp}/speak11_sim_tts_XXXXXXXXXX")
+    printf '%s' "$sentence" > "$TMP_FILE"
+    # Simulate API latency (10ms)
+    sleep 0.01
+    HTTP_CODE="200"
+    CURL_EXIT=0
+    [ -s "$TMP_FILE" ]
+}
+
+play_audio() {
+    if [ ! -s "$TMP_FILE" ]; then
+        echo "ERROR:file_missing_at_play:$TMP_FILE" >> "$_SIM_LOG"
+        return
+    fi
+    local content
+    content=$(cat "$TMP_FILE")
+    echo "PLAY:$content" >> "$_SIM_LOG"
+    sleep 0.03 &
+    PLAY_PID=$!
+}
+
+wait_audio() {
+    if [ -n "$PLAY_PID" ]; then
+        wait "$PLAY_PID" 2>/dev/null || true
+        PLAY_PID=""
+    fi
+}
+
+# ── Run the cloud pipeline (mirrors speak.sh cloud loop) ──
+_SENTENCES=$(split_sentences "$TEXT")
+
+_FIRST=true
+while IFS= read -r _SENTENCE; do
+    [ -z "$_SENTENCE" ] && continue
+    if ! run_elevenlabs_tts "$_SENTENCE"; then
+        if $_FIRST; then break; fi
+        break
+    fi
+    wait_audio
+    [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
+    _FIRST=false
+    _PREV_TMP_FILE="$TMP_FILE"
+    play_audio
+done <<< "$_SENTENCES"
+wait_audio
+
+echo "DONE" >> "$_SIM_LOG"
+SIMEOF
+chmod +x "$_SIMDIR/sim_cloud.sh"
+
+# Test: cloud pipeline plays sentences in order
+rm -f "$_SIM_LOG"
+TEXT="Alpha. Beta. Gamma." bash "$_SIMDIR/sim_cloud.sh" "$_SIMDIR" 2>/dev/null
+
+check "sim-cloud: all 3 sentences played" \
+    "3" "$(grep -c '^PLAY:' "$_SIM_LOG" 2>/dev/null || true)"
+
+check "sim-cloud: sentence order correct" \
+    "PLAY:Alpha.|PLAY:Beta.|PLAY:Gamma." \
+    "$(grep '^PLAY:' "$_SIM_LOG" | tr '\n' '|' | sed 's/|$//')"
+
+check "sim-cloud: no file-missing errors" \
+    "0" "$(grep -c 'ERROR:' "$_SIM_LOG" 2>/dev/null || true)"
+
+rm -rf "$_SIMDIR"
+
+# ── 58. Simulation: toggle kills process and cleans up ────────────
+
+section "Simulation: toggle kills all processes"
+
+# Run the entire toggle simulation in a separate bash process to isolate
+# signal handling and job control from the test runner.
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+
+bash -c '
+set +e
+_SIMDIR="$1"
+_LOG="$_SIMDIR/play.log"
+_PID="$_SIMDIR/tts.pid"
+
+# Create a slow fake TTS script
+cat > "$_SIMDIR/sim_slow.sh" << '\''INNER'\''
+#!/bin/bash
+_SIMDIR="$1"
+echo "$$" > "$_SIMDIR/tts.pid"
+cleanup() {
+    set +e
+    pkill -P $$ 2>/dev/null
+    echo "CLEANUP" >> "$_SIMDIR/play.log"
+    [ -f "$_SIMDIR/tts.pid" ] && [ "$(cat "$_SIMDIR/tts.pid" 2>/dev/null)" = "$$" ] && rm -f "$_SIMDIR/tts.pid"
+}
+trap cleanup EXIT INT TERM
+echo "PLAY" >> "$_SIMDIR/play.log"
+sleep 30 &
+_BG=$!
+sleep 30   # simulate blocking API call
+wait "$_BG" 2>/dev/null || true
+INNER
+chmod +x "$_SIMDIR/sim_slow.sh"
+
+# Start it
+bash "$_SIMDIR/sim_slow.sh" "$_SIMDIR" &
+_SLOW=$!
+disown $_SLOW 2>/dev/null
+
+# Wait for it to be ready
+for i in $(seq 1 30); do
+    [ -f "$_PID" ] && grep -q PLAY "$_LOG" 2>/dev/null && break
+    sleep 0.1
+done
+
+# Toggle: kill children then parent
+_TARGET=$(cat "$_PID" 2>/dev/null)
+[ -n "$_TARGET" ] && {
+    pkill -P "$_TARGET" 2>/dev/null
+    kill "$_TARGET" 2>/dev/null
+    for i in 1 2 3 4 5; do
+        kill -0 "$_TARGET" 2>/dev/null || break
+        sleep 0.1
+    done
+    kill -0 "$_TARGET" 2>/dev/null && kill -9 "$_TARGET" 2>/dev/null
+}
+sleep 0.3
+
+# Report results
+kill -0 "$_TARGET" 2>/dev/null && echo "target:alive" || echo "target:dead"
+grep -q CLEANUP "$_LOG" 2>/dev/null && echo "cleanup:yes" || echo "cleanup:no"
+[ -f "$_PID" ] && echo "pidfile:exists" || echo "pidfile:gone"
+
+wait "$_SLOW" 2>/dev/null
+' _ "$_SIMDIR" > "$_SIMDIR/result" 2>/dev/null
+
+check "sim-toggle: target process is dead" \
+    "yes" "$(grep -q 'target:dead' "$_SIMDIR/result" && echo "yes" || echo "no")"
+
+check "sim-toggle: cleanup handler ran" \
+    "yes" "$(grep -q 'cleanup:yes' "$_SIMDIR/result" && echo "yes" || echo "no")"
+
+check "sim-toggle: PID file was removed by cleanup" \
+    "yes" "$(grep -q 'pidfile:gone' "$_SIMDIR/result" && echo "yes" || echo "no")"
+
+rm -rf "$_SIMDIR"
+
+# ── 59. Simulation: rapid re-invocation doesn't overlap ──────────
+
+section "Simulation: no overlapping voices on rapid re-invoke"
+
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+
+bash -c '
+set +e
+_SIMDIR="$1"
+_LOG="$_SIMDIR/play.log"
+_PID="$_SIMDIR/tts.pid"
+
+cat > "$_SIMDIR/sim_voice.sh" << '\''INNER'\''
+#!/bin/bash
+_SIMDIR="$1"
+echo "$$" > "$_SIMDIR/tts.pid"
+cleanup() {
+    set +e
+    pkill -P $$ 2>/dev/null
+    [ -f "$_SIMDIR/tts.pid" ] && [ "$(cat "$_SIMDIR/tts.pid" 2>/dev/null)" = "$$" ] && rm -f "$_SIMDIR/tts.pid"
+}
+trap cleanup EXIT INT TERM
+echo "START:$$" >> "$_SIMDIR/play.log"
+sleep 30 &
+wait $! 2>/dev/null || true
+echo "END:$$" >> "$_SIMDIR/play.log"
+INNER
+chmod +x "$_SIMDIR/sim_voice.sh"
+
+# Instance A
+bash "$_SIMDIR/sim_voice.sh" "$_SIMDIR" &
+A=$!
+disown $A 2>/dev/null
+for i in $(seq 1 30); do [ -f "$_PID" ] && break; sleep 0.1; done
+
+# Instance B: toggle-kills A
+OLD=$(cat "$_PID" 2>/dev/null)
+[ -n "$OLD" ] && {
+    pkill -P "$OLD" 2>/dev/null
+    kill "$OLD" 2>/dev/null
+    for i in 1 2 3 4 5; do kill -0 "$OLD" 2>/dev/null || break; sleep 0.1; done
+    kill -0 "$OLD" 2>/dev/null && kill -9 "$OLD" 2>/dev/null
+    rm -f "$_PID"
+}
+sleep 0.1
+
+# Instance C
+bash "$_SIMDIR/sim_voice.sh" "$_SIMDIR" &
+C=$!
+disown $C 2>/dev/null
+for i in $(seq 1 30); do [ -f "$_PID" ] && break; sleep 0.1; done
+sleep 0.1
+
+# Report
+kill -0 "$A" 2>/dev/null && echo "a:alive" || echo "a:dead"
+kill -0 "$C" 2>/dev/null && echo "c:alive" || echo "c:dead"
+STARTS=$(grep -c "^START:" "$_LOG" 2>/dev/null || true)
+echo "starts:$STARTS"
+PIDVAL=$(cat "$_PID" 2>/dev/null)
+[ "$PIDVAL" = "$C" ] && echo "pidowner:c" || echo "pidowner:other"
+
+# Cleanup
+kill "$C" 2>/dev/null; wait "$C" 2>/dev/null; wait "$A" 2>/dev/null
+' _ "$_SIMDIR" > "$_SIMDIR/result" 2>/dev/null
+
+check "sim-overlap: instance A is dead" \
+    "yes" "$(grep -q 'a:dead' "$_SIMDIR/result" && echo "yes" || echo "no")"
+
+check "sim-overlap: instance C is alive" \
+    "yes" "$(grep -q 'c:alive' "$_SIMDIR/result" && echo "yes" || echo "no")"
+
+check "sim-overlap: exactly 2 instances started" \
+    "yes" "$(grep -q 'starts:2' "$_SIMDIR/result" && echo "yes" || echo "no")"
+
+check "sim-overlap: PID file contains C's PID" \
+    "yes" "$(grep -q 'pidowner:c' "$_SIMDIR/result" && echo "yes" || echo "no")"
+
+rm -rf "$_SIMDIR"
+
+# ── 60. 429 + install-local fallback exits 0 on success ──────────
+
+section "429 + install-local fallback exit code"
+
+# When ElevenLabs returns 429, user installs local TTS, and local TTS
+# succeeds, speak.sh should exit 0 (not fall through to exit 1).
+_STUBS=$(mktemp -d)
+_LOG="$_STUBS/osascript.log"
+
+# security: return fake API key
+printf '#!/bin/bash\necho "fake-key"\n' > "$_STUBS/security"
+# afplay: no-op
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
+# afinfo: fake duration
+cat > "$_STUBS/afinfo" << 'STUB'
+#!/bin/bash
+echo "estimated duration: 1.000000 sec"
+STUB
+# uname: return arm64 (required for install-local offer)
+printf '#!/bin/bash\necho "arm64"\n' > "$_STUBS/uname"
+
+# osascript: return "Install Local TTS" for the quota dialog
+cat > "$_STUBS/osascript" << STUB
+#!/bin/bash
+case "\$*" in *"volume settings"*) echo "false"; exit 0;; esac
+echo "\$*" >> "$_LOG"
+echo "Install Local TTS"
+STUB
+
+# curl: return 429
+cat > "$_STUBS/curl" << 'CURLSTUB'
+#!/bin/bash
+prev=""
+for a in "$@"; do
+    [ "$prev" = "-o" ] && printf '{"detail":"quota_exceeded"}' > "$a"
+    prev="$a"
+done
+printf "429"
+CURLSTUB
+
+# bash stub: intercept install-local.sh call and succeed
+cat > "$_STUBS/bash" << STUB
+#!/bin/bash
+case "\$1" in
+    *install-local*) exit 0 ;;  # simulate successful install
+    *) /bin/bash "\$@" ;;
+esac
+STUB
+
+# python3: handle mlx_audio (local TTS succeeds), block daemon, pass through json
+cat > "$_STUBS/python3" << STUB
+#!/bin/bash
+for arg in "\$@"; do
+    if [ "\$arg" = "mlx_audio.tts.generate" ]; then
+        printf "RIFF" > "speak11.wav"
+        exit 0
+    fi
+    case "\$arg" in *tts_server.py) exit 1;; esac
+done
+/usr/bin/python3 "\$@"
+STUB
+chmod +x "$_STUBS"/*
+
+check_exit "429 + install-local + local TTS succeeds → exits 0" 0 \
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"'
+
+rm -rf "$_STUBS"
 
 # ── Summary ──────────────────────────────────────────────────────
 

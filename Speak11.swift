@@ -217,6 +217,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        killCurrentProcess()
         stopTTSDaemon()
     }
 
