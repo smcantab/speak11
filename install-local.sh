@@ -122,6 +122,13 @@ echo "Using $("$PYTHON" --version 2>&1) at $PYTHON"
 # ── Create / update venv ─────────────────────────────────────────
 if [ -d "$VENV_DIR" ] && "$VENV_DIR/bin/python3" -c "import mlx_audio" 2>/dev/null; then
     echo "mlx-audio venv already exists."
+    # Ensure phonemizer-fork replaces upstream phonemizer (espeak OOV fallback)
+    if "$VENV_DIR/bin/pip" show phonemizer >/dev/null 2>&1 && \
+       ! "$VENV_DIR/bin/pip" show phonemizer-fork >/dev/null 2>&1; then
+        echo "Upgrading phonemizer to phonemizer-fork (fixes missing word pronunciation)…"
+        "$VENV_DIR/bin/pip" uninstall -y phonemizer 2>&1
+        "$VENV_DIR/bin/pip" install phonemizer-fork 2>&1
+    fi
 else
     echo "Creating Python venv at $VENV_DIR…"
     rm -rf "$VENV_DIR"
@@ -131,7 +138,7 @@ else
     set +e
     "$VENV_DIR/bin/pip" install --upgrade pip 2>&1
     "$VENV_DIR/bin/pip" install mlx-audio soundfile sounddevice scipy loguru \
-        "misaki==0.8.4" num2words spacy phonemizer espeakng_loader 2>&1
+        "misaki==0.8.4" num2words spacy phonemizer-fork espeakng_loader 2>&1
     pip_exit=$?
     set -e
     if [ $pip_exit -ne 0 ]; then

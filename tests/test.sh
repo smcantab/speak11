@@ -689,6 +689,19 @@ section "install-local.sh syntax"
 
 check "bash syntax valid" "0" "$(bash -n "$SCRIPT_DIR/install-local.sh" 2>/dev/null; echo $?)"
 
+# phonemizer-fork is required for espeak fallback (OOV word pronunciation).
+# The upstream "phonemizer" package is missing set_data_path(), which makes
+# misaki's EspeakFallback fail silently — unknown words get dropped.
+check "install-local.sh installs phonemizer-fork (not upstream phonemizer)" \
+    "yes" "$(grep -q 'phonemizer-fork' "$SCRIPT_DIR/install-local.sh" && echo "yes" || echo "no")"
+
+check "install-local.sh does not install upstream phonemizer (only -fork)" \
+    "0" "$(grep 'pip install' "$SCRIPT_DIR/install-local.sh" | grep -oE 'phonemizer[^ ]*' | grep -cxv 'phonemizer-fork')"
+
+check "install-local.sh upgrades existing venvs from phonemizer to phonemizer-fork" \
+    "yes" "$(grep -q 'pip.*uninstall.*phonemizer' "$SCRIPT_DIR/install-local.sh" && \
+             grep -q 'pip.*install phonemizer-fork' "$SCRIPT_DIR/install-local.sh" && echo "yes" || echo "no")"
+
 # ── 19. Respeak support: play_audio, TEXT_FILE, STATUS_FILE ──────
 
 section "Respeak support (play_audio, TEXT_FILE, STATUS_FILE)"
@@ -1307,6 +1320,32 @@ else
     fi
     rm -rf "$_TTS_TMPD"
     check "local TTS generates speak11.wav" "yes" "$_tts_ok"
+
+    # EspeakFallback must be active (phonemizer-fork + espeakng_loader).
+    # Without it, out-of-vocabulary words like proper nouns are silently dropped.
+    _espeak_ok="no"
+    if "$VENV_PY" -c "
+from misaki.espeak import EspeakFallback
+fb = EspeakFallback(british=True)
+" 2>/dev/null; then
+        _espeak_ok="yes"
+    fi
+    check "EspeakFallback initializes (OOV words handled)" "yes" "$_espeak_ok"
+
+    # Verify proper nouns that are NOT in misaki's dictionary get phonemized
+    # (not dropped). "Frum" is the canonical test case.
+    _oov_ok="no"
+    _oov_result=$("$VENV_PY" -c "
+from misaki.en import G2P
+from misaki.espeak import EspeakFallback
+fb = EspeakFallback(british=True)
+g2p = G2P(trf=False, british=True, fallback=fb)
+_, tokens = g2p('David Frum said hello.')
+dropped = [t.text for t in tokens if t.phonemes is None and t.text.strip() not in '.,;:!?']
+print('dropped:' + ','.join(dropped) if dropped else 'ok')
+" 2>/dev/null)
+    [ "$_oov_result" = "ok" ] && _oov_ok="yes"
+    check "OOV proper nouns phonemized (not dropped)" "yes" "$_oov_ok"
 fi
 
 # ── 34. TTS daemon (tts_server.py) ────────────────────────────
