@@ -1228,7 +1228,15 @@ check "install.command: Local Only + install fail exits with error" \
 check "install.command: Both + install fail falls back to ElevenLabs" \
     "yes" "$(grep -q 'ElevenLabs will be used instead' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
-# ── 25b. CLT auto-update logic ────────────────────────────────────
+# ── 25b. Quarantine stripping ─────────────────────────────────────
+
+section "Quarantine stripping"
+
+# Structural: install.command strips quarantine from source directory
+check "strips quarantine from source directory before compilation" \
+    "yes" "$(grep -q 'xattr.*quarantine.*SCRIPT_DIR' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# ── 25c. CLT auto-update logic ────────────────────────────────────
 
 section "CLT auto-update logic"
 
@@ -1314,7 +1322,7 @@ check "fixes xcrun by switching xcode-select to CLT path" \
     "yes" "$(grep -q 'xcrun swiftc --version' "$SCRIPT_DIR/install.command" && \
              grep -q 'xcode-select --switch.*CommandLineTools' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
-# ── 25c. install.command failure handling ─────────────────────────
+# ── 25d. install.command failure handling ─────────────────────────
 
 section "install.command failure handling"
 
@@ -1360,7 +1368,7 @@ check "sim: quotes removed from error message" \
 check "sim: backslashes removed from error message" \
     "no" "$(echo "$_sanitized" | grep -q '\\\\' && echo "yes" || echo "no")"
 
-# ── 25d. install.command robustness ──────────────────────────────
+# ── 25e. install.command robustness ──────────────────────────────
 
 section "install.command robustness"
 

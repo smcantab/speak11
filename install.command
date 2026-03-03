@@ -5,6 +5,12 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Strip macOS quarantine flag from downloaded files.  Without this,
+# xcrun swiftc may fail to read source files in protected directories
+# like ~/Downloads (macOS tags everything from a .zip with quarantine).
+xattr -dr com.apple.quarantine "$SCRIPT_DIR" 2>/dev/null || true
+
 INSTALL_DIR="$HOME/.local/bin"
 SERVICES_DIR="$HOME/Library/Services"
 WORKFLOW_NAME="Speak Selection.workflow"

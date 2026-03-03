@@ -117,6 +117,7 @@ Double-click **`uninstall.command`** — it removes everything including the Acc
 | HTTP 401 | API key is wrong or expired — run `install.command` again |
 | HTTP 429 | Monthly character quota exceeded — if both backends are installed, the app automatically falls back to local TTS. On Apple Silicon with ElevenLabs only, it will offer to install local TTS as a free alternative |
 | "python3 not found" | Run `xcode-select --install` in Terminal |
+| Settings app fails to compile | Check `~/.local/share/speak11/install.log` for the error. Usually fixed by updating Command Line Tools: `sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install` |
 | Local TTS is slow | Check `~/.local/share/speak11/tts.log` for errors. The TTS daemon keeps the model loaded and warmed up in memory so requests are near-instant |
 
 ## Cost
@@ -203,9 +204,9 @@ The installer also creates a macOS Services action you can bind to any shortcut.
 
 ### TTS daemon
 
-Local TTS uses a persistent daemon (`tts_server.py`) that keeps the Kokoro model loaded in memory. The daemon starts automatically on first local TTS request and shuts down after 5 minutes of inactivity. When the Settings app is running, it manages the daemon directly.
+Local TTS uses a persistent daemon (`tts_server.py`) that keeps the Kokoro model loaded in memory. When the menu bar app is running, it manages the daemon directly -- the daemon stays alive as long as the app is open. If you run `speak.sh` from the terminal without the app, the daemon starts on first request and shuts down after 5 minutes of inactivity.
 
-Logs are written to `~/.local/share/speak11/tts.log`.
+Logs are written to `~/.local/share/speak11/tts.log`. Installer errors (pip, swiftc) go to `~/.local/share/speak11/install.log`.
 
 ### Updating
 
