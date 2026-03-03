@@ -138,7 +138,7 @@ else
     set +e
     "$VENV_DIR/bin/pip" install --upgrade pip 2>&1
     "$VENV_DIR/bin/pip" install mlx-audio soundfile sounddevice scipy loguru \
-        "misaki==0.8.4" num2words spacy phonemizer-fork espeakng_loader 2>&1
+        "misaki==0.8.4" num2words spacy phonemizer-fork espeakng_loader pysbd 2>&1
     pip_exit=$?
     set -e
     if [ $pip_exit -ne 0 ]; then
@@ -183,8 +183,8 @@ else
 TTS_BACKEND="auto"
 TTS_BACKENDS_INSTALLED="both"
 LOCAL_VOICE="bf_lily"
-SPEED="1.00"
-LOCAL_SPEED="1.00"
+SPEED="1.0"
+LOCAL_SPEED="1.0"
 EOF
 fi
 

@@ -41,6 +41,18 @@ fi
 SPEED="${_ENV_SPEED:-${SPEED:-1.0}}"
 LOCAL_SPEED="${_ENV_LOCAL_SPEED:-${LOCAL_SPEED:-1.0}}"
 
+# ── Validate numeric config values ───────────────────────────────
+# Prevents malformed JSON if config is manually edited with bad values.
+_validate_num() { [[ "$2" =~ ^[0-9]*\.?[0-9]+$ ]] && echo "$2" || echo "$3"; }
+SPEED=$(_validate_num SPEED "$SPEED" "1.0")
+LOCAL_SPEED=$(_validate_num LOCAL_SPEED "$LOCAL_SPEED" "1.0")
+if [ "$TTS_BACKEND" = "elevenlabs" ] || [ "$TTS_BACKEND" = "auto" ]; then
+    STABILITY=$(_validate_num STABILITY "$STABILITY" "0.5")
+    SIMILARITY_BOOST=$(_validate_num SIMILARITY_BOOST "$SIMILARITY_BOOST" "0.75")
+    STYLE=$(_validate_num STYLE "$STYLE" "0.0")
+    case "$USE_SPEAKER_BOOST" in true|false) ;; *) USE_SPEAKER_BOOST="true" ;; esac
+fi
+
 # ── Auto-mode resolution ──────────────────────────────────────────
 # Must run before preflight checks so the python3 guard knows the
 # resolved backend (auto → local when there is no API key).
@@ -163,7 +175,17 @@ split_sentences() {
     "$py" -c "
 import re, sys
 text = sys.stdin.read().rstrip('\n')
-parts = re.split(r'(?<=[.!?;:])\s+', text)
+try:
+    import pysbd
+    seg = pysbd.Segmenter(language='en', clean=False)
+    parts = seg.segment(text)
+except ImportError:
+    # Protect common abbreviations: replace their period with a placeholder
+    # so the sentence-boundary regex does not split on them.
+    _ABR = re.compile(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc)\. ')
+    _p = _ABR.sub(lambda m: m.group(1) + '\x00 ', text)
+    _p = re.sub(r'\b([A-Z])\. ', lambda m: m.group(1) + '\x00 ', _p)
+    parts = [p.replace('\x00', '.') for p in re.split(r'(?<=[.!?])\s+', _p)]
 pos = 0
 for p in parts:
     p = p.strip()

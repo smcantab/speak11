@@ -128,6 +128,40 @@ check "single-quoted values parsed (bash)" \
     "single-quoted" "$(resolve_voice "$TMPCONF2")"
 rm -f "$TMPCONF" "$TMPCONF2"
 
+# ── 2b. Config numeric validation ────────────────────────────────
+
+section "Config numeric validation"
+
+# Structural: speak.sh validates numeric config values
+check "speak.sh validates SPEED is numeric" \
+    "yes" "$(grep -q '_validate_num.*SPEED' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh validates STABILITY is numeric" \
+    "yes" "$(grep -q '_validate_num.*STABILITY' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh validates USE_SPEAKER_BOOST is true/false" \
+    "yes" "$(grep -q 'USE_SPEAKER_BOOST.*true.*false\|case.*USE_SPEAKER_BOOST' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Functional: invalid SPEED falls back to default
+_TMPCONF=$(mktemp)
+printf 'SPEED="fast"\n' > "$_TMPCONF"
+_result=$(
+    _ENV_SPEED=""
+    source "$_TMPCONF"
+    SPEED="${_ENV_SPEED:-${SPEED:-1.0}}"
+    # Simulate validation
+    if [[ "$SPEED" =~ ^[0-9]*\.?[0-9]+$ ]]; then echo "$SPEED"; else echo "1.0"; fi
+)
+check "invalid SPEED falls back to 1.0" "1.0" "$_result"
+
+# Functional: valid SPEED passes through
+_result=$(
+    SPEED="1.25"
+    if [[ "$SPEED" =~ ^[0-9]*\.?[0-9]+$ ]]; then echo "$SPEED"; else echo "1.0"; fi
+)
+check "valid SPEED passes through" "1.25" "$_result"
+rm -f "$_TMPCONF"
+
 # ── 3. Empty / whitespace text detection ─────────────────────────
 
 section "Empty / whitespace text detection"
@@ -1614,69 +1648,49 @@ check "speak.sh: cloud loop passes sentence offset to play_audio" \
 _SPLIT_PY="${VENV_PYTHON:-python3}"
 [ -x "$_SPLIT_PY" ] || _SPLIT_PY=python3
 
+_split_count() {
+    "$_SPLIT_PY" -c "
+import re, sys
+text = sys.stdin.read().rstrip('\n')
+parts = re.split(r'(?<=[.!?])\s+', text)
+c=0
+for p in parts:
+    if p.strip(): c+=1
+print(c)
+" <<< "$1" 2>/dev/null
+}
+
 check "split: single sentence unchanged" \
     "Hello world." "$("$_SPLIT_PY" -c "
 import re, sys
-text = sys.stdin.read().strip()
-parts = re.split(r'(?<=[.!?;:])\s+', text)
+text = sys.stdin.read().rstrip('\n')
+parts = re.split(r'(?<=[.!?])\s+', text)
 for p in parts:
     p = p.strip()
     if p: print(p)
 " <<< "Hello world.")"
 
 check "split: two sentences produce two lines" \
-    "2" "$("$_SPLIT_PY" -c "
-import re, sys
-text = sys.stdin.read().strip()
-parts = re.split(r'(?<=[.!?;:])\s+', text)
-c=0
-for p in parts:
-    if p.strip(): c+=1
-print(c)
-" <<< "First sentence. Second sentence.")"
+    "2" "$(_split_count "First sentence. Second sentence.")"
 
 check "split: preserves text within sentences" \
     "First sentence." "$("$_SPLIT_PY" -c "
 import re, sys
-text = sys.stdin.read().strip()
-parts = re.split(r'(?<=[.!?;:])\s+', text)
+text = sys.stdin.read().rstrip('\n')
+parts = re.split(r'(?<=[.!?])\s+', text)
 for p in parts:
     p = p.strip()
     if p: print(p); break
 " <<< "First sentence. Second sentence.")"
 
 check "split: handles question marks" \
-    "2" "$("$_SPLIT_PY" -c "
-import re, sys
-text = sys.stdin.read().strip()
-parts = re.split(r'(?<=[.!?;:])\s+', text)
-c=0
-for p in parts:
-    if p.strip(): c+=1
-print(c)
-" <<< "What time is it? It is noon.")"
+    "2" "$(_split_count "What time is it? It is noon.")"
 
 check "split: handles exclamation marks" \
-    "2" "$("$_SPLIT_PY" -c "
-import re, sys
-text = sys.stdin.read().strip()
-parts = re.split(r'(?<=[.!?;:])\s+', text)
-c=0
-for p in parts:
-    if p.strip(): c+=1
-print(c)
-" <<< "Wow! That is great.")"
+    "2" "$(_split_count "Wow! That is great.")"
 
 check "split: no split mid-sentence" \
-    "1" "$("$_SPLIT_PY" -c "
-import re, sys
-text = sys.stdin.read().strip()
-parts = re.split(r'(?<=[.!?;:])\s+', text)
-c=0
-for p in parts:
-    if p.strip(): c+=1
-print(c)
-" <<< "Hello world without punctuation")"
+    "1" "$(_split_count "Hello world without punctuation")"
 
 # ── 40. PID and toggle mechanism ─────────────────────────────────
 
@@ -1886,8 +1900,16 @@ _SPLIT_PY="${VENV_PYTHON:-python3}"
 _run_split() {
     "$_SPLIT_PY" -c "
 import re, sys
-text = sys.stdin.read().strip()
-parts = re.split(r'(?<=[.!?;:])\s+', text)
+text = sys.stdin.read().rstrip('\n')
+try:
+    import pysbd
+    seg = pysbd.Segmenter(language='en', clean=False)
+    parts = seg.segment(text)
+except ImportError:
+    _ABR = re.compile(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc)\. ')
+    _p = _ABR.sub(lambda m: m.group(1) + '\x00 ', text)
+    _p = re.sub(r'\b([A-Z])\. ', lambda m: m.group(1) + '\x00 ', _p)
+    parts = [p.replace('\x00', '.') for p in re.split(r'(?<=[.!?])\s+', _p)]
 for p in parts:
     p = p.strip()
     if p: print(p)
@@ -1915,14 +1937,13 @@ check "split: punctuation-only text" \
 check "split: CJK without ASCII punctuation stays together" \
     "1" "$(echo "$(_run_split "这是一个测试")" | wc -l | tr -d ' ')"
 
-# The regex splits on ". " — abbreviations like "Mr." get split.
-# This is a known limitation. Verify the split happens (not a bug).
-check "split: abbreviation Mr. splits (known limitation)" \
-    "2" "$(echo "$(_run_split "Mr. Smith went home.")" | wc -l | tr -d ' ')"
+# Abbreviations should stay with the following text (not split)
+check "split: abbreviation Mr. stays with name" \
+    "1" "$(echo "$(_run_split "Mr. Smith went home.")" | wc -l | tr -d ' ')"
 
-# Semicolons and colons split
-check "split: semicolons split" \
-    "2" "$(echo "$(_run_split "First part; second part.")" | wc -l | tr -d ' ')"
+# Semicolons and colons are not sentence enders
+check "split: semicolons stay in sentence" \
+    "1" "$(echo "$(_run_split "First part; second part.")" | wc -l | tr -d ' ')"
 
 # Multiple whitespace between sentences
 check "split: double space between sentences" \
@@ -1931,6 +1952,77 @@ check "split: double space between sentences" \
 # split_sentences has a fallback if python fails
 check "split_sentences has fallback on python failure" \
     "yes" "$(grep -q '|| printf' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# ── 46a2. Sentence splitting: quality ───────────────────────────
+
+section "Sentence splitting quality"
+
+# Abbreviations must not trigger sentence splits
+check "split: Dr. stays with name" \
+    "2" "$(echo "$(_run_split "Dr. Smith said hello. He was tired.")" | wc -l | tr -d ' ')"
+
+check "split: Mrs. stays with name" \
+    "1" "$(echo "$(_run_split "Mrs. Jones went to the store.")" | wc -l | tr -d ' ')"
+
+check "split: Prof. stays with name" \
+    "1" "$(echo "$(_run_split "Prof. Brown teaches history.")" | wc -l | tr -d ' ')"
+
+# Spaced initials must not split
+check "split: J. K. Rowling stays together" \
+    "2" "$(echo "$(_run_split "J. K. Rowling wrote Harry Potter. It sold millions.")" | wc -l | tr -d ' ')"
+
+# Colons in prose are not sentence enders
+check "split: colon kept in sentence" \
+    "2" "$(echo "$(_run_split "He had one goal: win the race. And he did.")" | wc -l | tr -d ' ')"
+
+# Normal two-sentence text still splits
+check "split: two sentences split correctly" \
+    "2" "$(echo "$(_run_split "Hello world. Goodbye world.")" | wc -l | tr -d ' ')"
+
+# Structural: speak.sh tries pySBD before regex fallback
+check "speak.sh: split_sentences tries pySBD" \
+    "yes" "$(grep -q 'import pysbd' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Structural: regex fallback does not split on colons/semicolons
+check "speak.sh: regex fallback has no colon/semicolon" \
+    "no" "$(awk '/^split_sentences/,/^}/' "$SPEAK_SH" | grep -qF '[.!?;:]' && echo "yes" || echo "no")"
+
+# Structural: regex fallback protects abbreviations
+check "speak.sh: regex fallback protects abbreviations" \
+    "yes" "$(awk '/^split_sentences/,/^}/' "$SPEAK_SH" | grep -q 'Mr|Mrs' && echo "yes" || echo "no")"
+
+# Functional: test the regex fallback explicitly (force pySBD import to fail)
+_run_split_regex() {
+    "$_SPLIT_PY" -c "
+import re, sys
+text = sys.stdin.read().rstrip('\n')
+_ABR = re.compile(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc)\. ')
+_p = _ABR.sub(lambda m: m.group(1) + '\x00 ', text)
+_p = re.sub(r'\b([A-Z])\. ', lambda m: m.group(1) + '\x00 ', _p)
+parts = [p.replace('\x00', '.') for p in re.split(r'(?<=[.!?])\s+', _p)]
+for p in parts:
+    p = p.strip()
+    if p: print(p)
+" <<< "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+check "regex fallback: Dr. stays with name" \
+    "2" "$(echo "$(_run_split_regex "Dr. Smith said hello. He was tired.")" | wc -l | tr -d ' ')"
+
+check "regex fallback: Mr. stays with name" \
+    "1" "$(echo "$(_run_split_regex "Mr. Smith went home.")" | wc -l | tr -d ' ')"
+
+check "regex fallback: J. K. stays together" \
+    "2" "$(echo "$(_run_split_regex "J. K. Rowling wrote Harry Potter. It sold millions.")" | wc -l | tr -d ' ')"
+
+check "regex fallback: colon kept in sentence" \
+    "2" "$(echo "$(_run_split_regex "He had one goal: win the race. And he did.")" | wc -l | tr -d ' ')"
+
+check "regex fallback: semicolons kept in sentence" \
+    "1" "$(echo "$(_run_split_regex "First part; second part.")" | wc -l | tr -d ' ')"
+
+check "regex fallback: basic two sentences" \
+    "2" "$(echo "$(_run_split_regex "Hello world. Goodbye world.")" | wc -l | tr -d ' ')"
 
 # ── 46b. Sentence splitting: offset format ─────────────────────
 
@@ -1943,7 +2035,15 @@ _test_split_offsets() {
     "$py" -c "
 import re, sys
 text = sys.stdin.read().rstrip('\n')
-parts = re.split(r'(?<=[.!?;:])\s+', text)
+try:
+    import pysbd
+    seg = pysbd.Segmenter(language='en', clean=False)
+    parts = seg.segment(text)
+except ImportError:
+    _ABR = re.compile(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc)\. ')
+    _p = _ABR.sub(lambda m: m.group(1) + '\x00 ', text)
+    _p = re.sub(r'\b([A-Z])\. ', lambda m: m.group(1) + '\x00 ', _p)
+    parts = [p.replace('\x00', '.') for p in re.split(r'(?<=[.!?])\s+', _p)]
 pos = 0
 for p in parts:
     p = p.strip()
@@ -1973,10 +2073,10 @@ _OFF_RESULT=$(_test_split_offsets "Yes. Yes. Yes.")
 check "offset: repeated sentences advance correctly" \
     "0|5|10" "$(echo "$_OFF_RESULT" | cut -f1 | tr '\n' '|' | sed 's/|$//')"
 
-# David Frum: the bug-triggering example (colon splits too)
+# David Frum: colon stays in sentence, only period splits
 _OFF_RESULT=$(_test_split_offsets "David Frum: Hello, and welcome to The David Frum Show. I'm David Frum, a staff writer at The Atlantic.")
-check "offset: David Frum third sentence at 55" \
-    "55" "$(echo "$_OFF_RESULT" | sed -n '3p' | cut -f1)"
+check "offset: David Frum second sentence at 55" \
+    "55" "$(echo "$_OFF_RESULT" | sed -n '2p' | cut -f1)"
 
 # ── 47. Temp file lifecycle ──────────────────────────────────────
 
@@ -2435,7 +2535,7 @@ split_sentences() {
     python3 -c "
 import re, sys
 text = sys.stdin.read().rstrip('\n')
-parts = re.split(r'(?<=[.!?;:])\s+', text)
+parts = re.split(r'(?<=[.!?])\s+', text)
 pos = 0
 for p in parts:
     p = p.strip()
@@ -2599,7 +2699,7 @@ split_sentences() {
     python3 -c "
 import re, sys
 text = sys.stdin.read().rstrip('\n')
-parts = re.split(r'(?<=[.!?;:])\s+', text)
+parts = re.split(r'(?<=[.!?])\s+', text)
 pos = 0
 for p in parts:
     p = p.strip()
@@ -2729,7 +2829,7 @@ split_sentences() {
     python3 -c "
 import re, sys
 text = sys.stdin.read().rstrip('\n')
-parts = re.split(r'(?<=[.!?;:])\s+', text)
+parts = re.split(r'(?<=[.!?])\s+', text)
 pos = 0
 for p in parts:
     p = p.strip()

@@ -63,6 +63,17 @@ app works and serves two purposes:
 2. **Fast first audio (local):** Kokoro phonemization is slow on long text.
    Splitting lets the first sentence play while later ones generate.
 
+### Split implementation
+
+`split_sentences()` uses pySBD (rule-based sentence boundary disambiguation) when
+available in the venv, falling back to a regex for cloud-only installs:
+
+1. **pySBD** (venv path): handles abbreviations (`Dr.`, `Mr.`), initials (`J. K.`),
+   and all common edge cases correctly.
+2. **Regex fallback**: `(?<=[.!?])\s+` with abbreviation protection. Does NOT split
+   on colons or semicolons (they are not sentence enders).
+3. **Bash fallback** (Python unavailable): whole text as single chunk.
+
 ### Split format
 
 `split_sentences()` outputs one line per sentence:
@@ -179,6 +190,36 @@ guard catches this and uses the old formula.
 
 `scheduleRespeak()` uses a 0.5s timer. Rapid setting changes (e.g., clicking through
 speed options) only trigger one respeak.
+
+
+## isSpeakingFlag state machine
+
+The Swift app tracks whether audio is playing via `isSpeakingFlag` and a generation
+counter (`speakGeneration`). All writes to both are guarded by `speakLock`.
+
+### States and transitions
+
+```
+IDLE --> SPEAKING:    runSpeak() sets flag=true, increments generation
+SPEAKING --> IDLE:    task completion (if generation matches saved value)
+SPEAKING --> IDLE:    stopSpeaking() (explicit clear, any generation)
+SPEAKING --> SPEAKING: respeak() kills old, starts new (generation increments twice)
+```
+
+### Generation counter prevents stale completions
+
+1. `runSpeak()` saves `gen=N`, sets `flag=true`.
+2. `killCurrentProcess()` sets `gen=N+1`.
+3. Old task completes, sees `gen != N`, does NOT clear flag.
+4. New `runSpeak()` saves `gen=N+2`, flag stays `true` (correct).
+
+Without the generation counter, step 3 would clear the flag, leaving IDLE during
+step 4 -- a race where a second hotkey press could start overlapping audio.
+
+### Invariant
+
+`isSpeakingFlag` is true if and only if there exists a running speak.sh process
+that was started by the current generation.
 
 
 ## TTS daemon (tts_server.py)
@@ -390,3 +431,11 @@ Interrupt tests use `_run_interrupt_test` which:
 
 10. **iconv before TTS.** Text must pass through `iconv -f UTF-8 -t UTF-8//IGNORE`
     before being sent to any TTS backend. PDF text often contains unpaired surrogates.
+
+11. **pySBD for sentence splitting.** The venv installs `pysbd` for high-quality
+    sentence boundary detection. The regex fallback must not split on colons or
+    semicolons and must protect common abbreviations (`Mr.`, `Dr.`, etc.).
+
+12. **Numeric config values are validated.** `_validate_num` rejects non-numeric
+    SPEED, STABILITY, etc. and falls back to defaults. `USE_SPEAKER_BOOST` must
+    be exactly `true` or `false`.

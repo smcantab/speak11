@@ -9,6 +9,10 @@ INSTALL_DIR="$HOME/.local/bin"
 SERVICES_DIR="$HOME/Library/Services"
 WORKFLOW_NAME="Speak Selection.workflow"
 
+# Guard Terminal.app-specific AppleScript (user may use iTerm2, Warp, etc.)
+_IS_TERMINAL_APP=false
+[ "$TERM_PROGRAM" = "Apple_Terminal" ] && _IS_TERMINAL_APP=true
+
 # ── Cleanup ───────────────────────────────────────────────────────
 _spinner_pid=""
 
@@ -16,7 +20,7 @@ cleanup() {
     tput cnorm 2>/dev/null || true
     [ -n "$_spinner_pid" ] && kill "$_spinner_pid" 2>/dev/null || true
     wait 2>/dev/null || true
-    osascript -e 'tell application "Terminal" to close front window' 2>/dev/null &
+    $_IS_TERMINAL_APP && osascript -e 'tell application "Terminal" to close front window' 2>/dev/null &
 }
 trap cleanup EXIT
 
@@ -53,7 +57,7 @@ unspin() {
 }
 
 # ── Keep terminal in the background — user interacts via dialogs ──
-osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
+$_IS_TERMINAL_APP && osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
 
 # ── Welcome ───────────────────────────────────────────────────────
 result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Copy the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS for free offline use (Apple Silicon)" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null)
@@ -491,13 +495,13 @@ TTS_BACKEND="$_CFG_BACKEND"
 TTS_BACKENDS_INSTALLED="$_CFG_INSTALLED"
 VOICE_ID="pFZP5JQG7iQjIQuC4Bku"
 MODEL_ID="eleven_flash_v2_5"
-STABILITY="0.50"
+STABILITY="0.5"
 SIMILARITY_BOOST="0.75"
-STYLE="0.00"
+STYLE="0.0"
 USE_SPEAKER_BOOST="true"
-SPEED="1.00"
+SPEED="1.0"
 LOCAL_VOICE="bf_lily"
-LOCAL_SPEED="1.00"
+LOCAL_SPEED="1.0"
 CFGEOF
 step "Default config created"
 
