@@ -283,13 +283,18 @@ while True:
 s.close()
 sys.stdout.write(d.decode().strip())
 " "$_SOCK" "$req" 2>/dev/null) || return 1
-    # Parse audio_file from JSON response with bash string ops
-    local audio_file="${resp#*\"audio_file\":\"}"
+    # Parse audio_file from JSON response with bash string ops.
+    # Python json.dumps adds a space after ":", so strip it.
+    local audio_file="${resp#*\"audio_file\":}"
+    audio_file="${audio_file# }"
+    audio_file="${audio_file#\"}"
     audio_file="${audio_file%%\"*}"
     if [ -n "$audio_file" ] && [ -f "$audio_file" ]; then
         printf '%s' "$audio_file"
     else
-        local msg="${resp#*\"message\":\"}"
+        local msg="${resp#*\"message\":}"
+        msg="${msg# }"
+        msg="${msg#\"}"
         msg="${msg%%\"*}"
         printf '%s\n' "${msg:-daemon error}" >&2
         return 1

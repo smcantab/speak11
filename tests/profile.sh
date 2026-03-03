@@ -100,7 +100,7 @@ _TRACE=$(mktemp)
 # Use a temp file for input to avoid pipe (which prevents stderr redirect).
 _INPUT=$(mktemp)
 printf '%s' "$TEXT" > "$_INPUT"
-PATH="$_STUBS:$PATH" \
+TTS_BACKEND=local SPEAK11_MUTE_CHECKED=1 PATH="$_STUBS:$PATH" \
     PS4='+$(/usr/bin/perl -MTime::HiRes=time -e "printf q{%.6f }, time") ' \
     bash -x "$SPEAK_SH" < "$_INPUT" >"$_TRACE.out" 2>"$_TRACE" || true
 rm -f "$_INPUT" "$_TRACE.out"
