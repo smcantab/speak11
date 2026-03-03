@@ -9,8 +9,9 @@
 .build/
 .swiftpm/
 
-# App bundles (built during install, not tracked)
+# App bundles and CLI tools (built during install, not tracked)
 *.app
+speak11-audio
 
 # IDE
 .vscode/

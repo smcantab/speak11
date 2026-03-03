@@ -4151,6 +4151,39 @@ check "respeak: 2-line STATUS_FILE fallback works" \
 
 rm -rf "$_RESP_TMP"
 
+# ── 63. Fast mute check (CoreAudio CLI tool) ─────────────────────
+
+section "Fast mute check (CoreAudio CLI tool)"
+
+_AUDIO_SWIFT="$SCRIPT_DIR/speak11-audio.swift"
+
+check "speak11-audio.swift exists" \
+    "yes" "$([ -f "$_AUDIO_SWIFT" ] && echo "yes" || echo "no")"
+
+check "speak11-audio.swift imports CoreAudio" \
+    "yes" "$(grep -q 'import CoreAudio' "$_AUDIO_SWIFT" 2>/dev/null && echo "yes" || echo "no")"
+
+check "speak11-audio.swift uses kAudioDevicePropertyMute" \
+    "yes" "$(grep -q 'kAudioDevicePropertyMute' "$_AUDIO_SWIFT" 2>/dev/null && echo "yes" || echo "no")"
+
+check "speak11-audio.swift handles is-muted subcommand" \
+    "yes" "$(grep -q 'is-muted' "$_AUDIO_SWIFT" 2>/dev/null && echo "yes" || echo "no")"
+
+check "speak11-audio.swift handles unmute subcommand" \
+    "yes" "$(grep -q '"unmute"' "$_AUDIO_SWIFT" 2>/dev/null && echo "yes" || echo "no")"
+
+check "speak.sh: mute check uses speak11-audio" \
+    "yes" "$(grep -q 'speak11-audio' "$SPEAK_SH" && grep -q '_AUDIO_TOOL.*is-muted' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: unmute uses speak11-audio" \
+    "yes" "$(grep -q 'speak11-audio' "$SPEAK_SH" && grep -q '_AUDIO_TOOL.*unmute' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: osascript mute fallback for missing binary" \
+    "yes" "$(grep -q 'output muted of (get volume settings)' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "install.command: compiles speak11-audio.swift" \
+    "yes" "$(grep -q 'speak11-audio.swift' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
 # ── Summary ──────────────────────────────────────────────────────
 
 printf "\n────────────────────────────────────────────\n"

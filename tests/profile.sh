@@ -122,7 +122,7 @@ _first_ts() {
 T_START=$(_first_ts 'TEXT=')                          # text read from stdin/pbpaste
 T_VALIDATE=$(_first_ts '\[\[.*=~.*\[:space:\]')       # whitespace check
 T_ICONV=$(_first_ts 'iconv')                          # UTF-8 cleanup
-T_MUTE=$(_first_ts 'output muted\|osascript')         # mute check
+T_MUTE=$(_first_ts '_AUDIO_TOOL=\|output muted\|osascript')  # mute check
 T_SPLIT=$(_first_ts 'split_sentences')                 # sentence splitting
 T_FIRST_GEN=$(_first_ts 'tts_daemon_request\|run_local_tts\|run_elevenlabs_tts')  # first TTS
 T_FIRST_PLAY=$(_first_ts 'play_audio')                 # first play_audio call

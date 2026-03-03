@@ -64,6 +64,7 @@ rm -f "$HOME/.local/bin/speak.sh"
 rm -f "$HOME/.local/bin/tts_server.py"
 rm -f "$HOME/.local/bin/install-local.sh"
 rm -f "$HOME/.local/bin/uninstall.command"
+rm -f "$HOME/.local/bin/speak11-audio"
 step "Scripts removed"
 
 # ── Remove the Services workflow ──────────────────────────────────

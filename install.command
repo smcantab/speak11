@@ -217,6 +217,11 @@ if [ -f "$SCRIPT_DIR/uninstall.command" ]; then
     chmod +x "$INSTALL_DIR/uninstall.command"
 fi
 chmod +x "$INSTALL_DIR/speak.sh" "$INSTALL_DIR/install-local.sh"
+# Compile speak11-audio (fast mute check via CoreAudio, replaces osascript)
+if [ -f "$SCRIPT_DIR/speak11-audio.swift" ]; then
+    xcrun swiftc "$SCRIPT_DIR/speak11-audio.swift" -o "$INSTALL_DIR/speak11-audio" -O 2>>"$_LOG_FILE" && \
+        chmod +x "$INSTALL_DIR/speak11-audio" || true
+fi
 step "Scripts copied to ~/.local/bin"
 
 # ── Install Automator Quick Action ────────────────────────────────
