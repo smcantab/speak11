@@ -182,6 +182,15 @@ if [ -z "$_clt_major" ] || [ "$_clt_major" != "$_os_major" ]; then
     fi
 fi
 
+# ── Verify swiftc is reachable via xcrun ─────────────────────────
+# xcode-select may point to a missing Xcode.app even when CLT is installed.
+# Reset to the CLT path if it has swiftc but xcrun can't find it.
+if ! xcrun swiftc --version >/dev/null 2>&1; then
+    if [ -x /Library/Developer/CommandLineTools/usr/bin/swiftc ]; then
+        osascript -e 'do shell script "xcode-select --switch /Library/Developer/CommandLineTools" with prompt "Speak11 needs to configure the Swift compiler." with administrator privileges' 2>>"$_LOG_FILE" || true
+    fi
+fi
+
 # ── Install mlx-audio (Both or Local Only on Apple Silicon) ──────
 if $IS_ARM64 && [ "$BACKEND_CHOICE" != "ElevenLabs Only" ]; then
     spin "Installing mlx-audio and downloading Kokoro model…"

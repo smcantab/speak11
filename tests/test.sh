@@ -1309,6 +1309,11 @@ check "sim: triggers update when CLT missing" \
 
 rm -rf "$_CLT_SIM_DIR"
 
+# Structural: installer fixes xcrun when xcode-select points to wrong path
+check "fixes xcrun by switching xcode-select to CLT path" \
+    "yes" "$(grep -q 'xcrun swiftc --version' "$SCRIPT_DIR/install.command" && \
+             grep -q 'xcode-select --switch.*CommandLineTools' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
 # ── 25c. install.command failure handling ─────────────────────────
 
 section "install.command failure handling"

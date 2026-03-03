@@ -14,11 +14,13 @@ Speak11 has four components:
 | `Speak11.swift` | Swift/AppKit | Menu bar app. Global hotkey, settings UI, config file, respeak. |
 | `tts_server.py` | Python | Persistent Kokoro daemon. Keeps the model in memory for instant response. |
 | `install.command` | Bash | Interactive installer. Dialogs, backend choice, CLT auto-update, Keychain, app compile. |
+| `speak11-audio.swift` | Swift | CoreAudio CLI. Sub-millisecond mute check and unmute for standalone use. |
 
 Data flows one way: **Swift -> speak.sh -> tts_server.py**.
-The Swift app launches speak.sh as a subprocess. speak.sh connects to the daemon
-over a Unix socket. There is no reverse communication except through shared files
-(TEXT_FILE, STATUS_FILE, config).
+The Swift app checks mute state via CoreAudio in-process (microseconds), then
+launches speak.sh as a subprocess with `SPEAK11_MUTE_CHECKED=1`. speak.sh
+connects to the daemon over a Unix socket. There is no reverse communication
+except through shared files (TEXT_FILE, STATUS_FILE, config).
 
 
 ## Backend model
@@ -166,7 +168,7 @@ respeaks from roughly the current position.
 1. speak.sh writes `TEXT_FILE` with the full original text.
 2. `play_audio` writes `STATUS_FILE` with four lines:
    ```
-   epoch_seconds      (fractional, via perl Time::HiRes)
+   epoch_seconds      (fractional, cached at startup then derived with bash SECONDS)
    audio_duration
    char_offset        (sentence start in original text)
    sentence_length    (character count of current sentence)
@@ -310,10 +312,12 @@ that forked Python once per sentence (30-80ms x N sentences = 300-800ms overhead
 
 ### Daemon communication
 
-`tts_daemon_request()` uses `nc -U` (macOS built-in netcat with Unix socket support)
-instead of a Python subprocess. JSON request is built with `json_encode`, response
-is parsed with bash string operations (`${resp#*pattern}`, `${resp%%pattern}`).
-This eliminates one Python fork per daemon request (~50ms each).
+`tts_daemon_request()` uses a python one-liner for Unix socket I/O. macOS's
+built-in `nc -U` silently drops responses from Unix sockets (sends fine but
+cannot read replies), so a python socket is required. JSON request is built
+with `json_encode`, response is parsed with bash string operations. The parser
+strips optional spaces after colons (`"key": "value"` vs `"key":"value"`)
+because Python's `json.dumps` adds them.
 
 
 ## Config fields
@@ -353,6 +357,7 @@ This is passed via `${LOCAL_VOICE:0:1}` in bash.
 | `~/.local/bin/speak.sh` | Installed speak script |
 | `~/.local/bin/tts_server.py` | Installed daemon |
 | `~/.local/bin/install-local.sh` | Installed local TTS installer |
+| `~/.local/bin/speak11-audio` | Compiled CoreAudio CLI (mute check/unmute) |
 | `~/.local/bin/uninstall.command` | Installed uninstaller |
 | `~/.local/share/speak11/venv/` | Python venv with mlx-audio |
 | `~/.local/share/speak11/tts.sock` | Daemon Unix socket |
@@ -420,11 +425,14 @@ on first match, O(n) worst case).
 speak.sh runs on every hotkey press. Each `fork+exec` costs 5-50ms. Rules:
 
 1. **json_encode is pure bash.** No python3 fork per sentence.
-2. **tts_daemon_request uses nc -U.** No python3 fork per daemon request.
-3. **wav_duration uses stat+bc.** No afinfo fork for local WAV files.
+2. **tts_daemon_request uses python socket.** One fork per daemon request
+   (`nc -U` is broken on macOS -- silently drops responses from Unix sockets).
+3. **wav_duration uses pure bash arithmetic.** `stat -f%z` for file size,
+   then shell arithmetic for 24kHz mono 16-bit WAV: `(bytes - 44) * 1000 / 48000`.
    Falls back to afinfo for non-WAV (ElevenLabs MP3/OGG).
-4. **Fractional epoch uses perl.** `date +%s` on macOS is integer-only.
-   `/usr/bin/perl -MTime::HiRes=time` gives millisecond precision.
+4. **Fractional epoch is cached once.** `perl -MTime::HiRes` runs once at startup.
+   Subsequent calls use `_BASE_EPOCH + (SECONDS - _BASE_SECONDS)` with pure bash
+   arithmetic (no fork per sentence).
 
 ### Profiling
 
@@ -520,3 +528,21 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
     uninstall.command use `$_IS_TERMINAL_APP` to skip Terminal.app-specific
     AppleScript when the user runs the script in iTerm2, Warp, or another
     terminal. Cleanup closes the specific window by ID, not `front window`.
+
+20. **nc -U is broken on macOS.** The built-in netcat sends data over Unix
+    sockets but silently drops responses. Always use a python socket one-liner
+    for two-way Unix socket communication.
+
+21. **JSON parsing must handle spaces after colon.** Python's `json.dumps`
+    outputs `"key": "value"`. Bash string operations must strip the optional
+    space: `${resp#*\"key\":}` then `${val# }`.
+
+22. **Mute check is three-tier.** From the app: in-process CoreAudio
+    (microseconds). Standalone: `speak11-audio` CLI (35ms). Last resort:
+    osascript (80-500ms). `SPEAK11_MUTE_CHECKED=1` env var tells speak.sh
+    the app already handled it.
+
+23. **Profiler detects daemon bypass.** When daemon communication fails,
+    speak.sh falls back to cold model loading (~3s). `tests/profile.sh`
+    checks for this and prints a warning so silent fallbacks don't go
+    unnoticed.
