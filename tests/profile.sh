@@ -144,6 +144,11 @@ _print_phase "Mute check"               "$T_MUTE"       "$T_SPLIT"
 _print_phase "Sentence splitting"       "$T_SPLIT"      "$T_FIRST_GEN"
 _print_phase "First TTS generation"     "$T_FIRST_GEN"  "$T_FIRST_PLAY"
 
+# Warn if daemon was bypassed (fallback to cold model load)
+if grep -q 'falling back to direct invocation' "$_TRACE" 2>/dev/null; then
+    printf "   \033[31m⚠  DAEMON BYPASSED — fell back to cold model load\033[0m\n"
+fi
+
 if [ -n "$T_START" ] && [ -n "$T_FIRST_PLAY" ]; then
     _ttfa=$(elapsed_ms "$T_START" "$T_FIRST_PLAY")
     printf "   \033[1m%-30s %s\033[0m\n" "TIME TO FIRST AUDIO:" "$(fmt_ms "$_ttfa")"
