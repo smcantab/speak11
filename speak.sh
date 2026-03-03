@@ -265,9 +265,25 @@ tts_daemon_request() {
     local text_json voice="${_VOICE:-bf_lily}" speed="${_SPEED:-1.00}" lang="${_LANG:-b}"
     text_json=$(json_encode "$TEXT")
     local req="{\"text\":${text_json},\"voice\":\"${voice}\",\"speed\":\"${speed}\",\"lang_code\":\"${lang}\"}"
+    # nc -U on macOS silently drops responses from Unix sockets.
+    # Use a python one-liner for reliable socket I/O (one fork, same as nc).
     local resp
-    resp=$(printf '%s\n' "$req" | nc -U "$_SOCK" 2>/dev/null) || return 1
-    # Parse audio_file from JSON response without forking python
+    resp=$("${VENV_PYTHON:-python3}" -c "
+import socket,sys
+s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+s.settimeout(120)
+s.connect(sys.argv[1])
+s.sendall(sys.argv[2].encode()+b'\n')
+d=b''
+while True:
+    c=s.recv(4096)
+    if not c:break
+    d+=c
+    if b'\n' in d:break
+s.close()
+sys.stdout.write(d.decode().strip())
+" "$_SOCK" "$req" 2>/dev/null) || return 1
+    # Parse audio_file from JSON response with bash string ops
     local audio_file="${resp#*\"audio_file\":\"}"
     audio_file="${audio_file%%\"*}"
     if [ -n "$audio_file" ] && [ -f "$audio_file" ]; then

@@ -3935,21 +3935,22 @@ else
     check "json_encode: valid JSON (python round-trip)" "yes" "function not found"
 fi
 
-# ── 57. nc -U for daemon requests (no Python fork) ───────────────
+# ── 57. Daemon request via Unix socket ────────────────────────────
 
-section "Daemon requests via nc -U (no Python fork)"
+section "Daemon request via Unix socket"
 
-# speak.sh should use nc -U for daemon communication
 _TDR_BODY=$(sed -n '/^tts_daemon_request() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH")
-check "speak.sh: tts_daemon_request uses nc -U" \
-    "yes" "$(echo "$_TDR_BODY" | grep -q 'nc -U\|nc.*-U' && echo "yes" || echo "no")"
 
-# JSON request built with json_encode, not python3
-check "speak.sh: tts_daemon_request builds JSON without python3" \
-    "0" "$(echo "$_TDR_BODY" | grep -c 'python3' || true)"
+# Must use python socket (nc -U on macOS drops responses from Unix sockets)
+check "speak.sh: tts_daemon_request uses python socket" \
+    "yes" "$(echo "$_TDR_BODY" | grep -q 'socket.AF_UNIX\|SOCK_STREAM' && echo "yes" || echo "no")"
 
-# Response parsing uses bash string ops, not python3
-check "speak.sh: tts_daemon_request parses response without python3" \
+# JSON request built with json_encode (bash, no extra fork)
+check "speak.sh: tts_daemon_request uses json_encode for request" \
+    "yes" "$(echo "$_TDR_BODY" | grep -q 'json_encode' && echo "yes" || echo "no")"
+
+# Response parsing uses bash string ops
+check "speak.sh: tts_daemon_request parses response without jq" \
     "yes" "$(echo "$_TDR_BODY" | grep -q 'audio_file.*%%\|audio_file.*##' && echo "yes" || echo "no")"
 
 # ── 58. WAV duration without afinfo (local mode) ─────────────────
