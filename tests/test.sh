@@ -306,11 +306,29 @@ check "config write is not nested inside settings if block" \
 check "done dialog conditions model message on mlx_ok" \
     "yes" "$(grep -B3 'Kokoro voice model' "$SCRIPT_DIR/install.command" | grep -q 'mlx_ok' && echo "yes" || echo "no")"
 
-# ── 9. uninstall.command syntax ──────────────────────────────
+# ── 9. uninstall.command syntax + structure ──────────────────
 
-section "uninstall.command syntax"
+section "uninstall.command syntax + structure"
 
 check "bash syntax valid" "0" "$(bash -n "$SCRIPT_DIR/uninstall.command" 2>/dev/null; echo $?)"
+
+check "uninstall: Terminal window ID captured" \
+    "yes" "$(grep -q '_TERM_WINDOW_ID' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
+
+check "uninstall: cleanup closes window by ID (not front window)" \
+    "yes" "$(grep -q 'whose id is' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
+
+check "uninstall: Terminal activate guarded by _IS_TERMINAL_APP" \
+    "yes" "$(grep -q '_IS_TERMINAL_APP' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
+
+check "uninstall: removes its own installed copy" \
+    "yes" "$(grep -q 'rm.*uninstall.command' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
+
+check "uninstall: confirm dialog has || true" \
+    "yes" "$(grep 'Uninstall.*Cancel\|Cancel.*Uninstall' "$SCRIPT_DIR/uninstall.command" | grep -q '|| true' && echo "yes" || echo "no")"
+
+check "uninstall: done dialog has || true" \
+    "yes" "$(grep 'has been removed' "$SCRIPT_DIR/uninstall.command" | grep -q '|| true' && echo "yes" || echo "no")"
 
 # ── 10. Swift source structure ────────────────────────────────────
 
@@ -374,7 +392,7 @@ else
     fi
 fi
 
-# ── 11. TTS_BACKEND / LOCAL_VOICE config priority ─────────────────
+# ── 11b. TTS_BACKEND / LOCAL_VOICE config priority ────────────────
 
 section "TTS_BACKEND / LOCAL_VOICE config priority"
 
@@ -1353,6 +1371,174 @@ check "sim: quotes removed from error message" \
 check "sim: backslashes removed from error message" \
     "no" "$(echo "$_sanitized" | grep -q '\\\\' && echo "yes" || echo "no")"
 
+# ── 25d. install.command robustness ──────────────────────────────
+
+section "install.command robustness"
+
+# §1: Config must be written BEFORE the app is opened (race condition)
+# The config write block (case $BACKEND_CHOICE) must appear before open "$APP_BUNDLE"
+_cfg_line=$(grep -n '^case.*BACKEND_CHOICE' "$SCRIPT_DIR/install.command" | head -1 | cut -d: -f1)
+_open_line=$(grep -n 'open "\$APP_BUNDLE"' "$SCRIPT_DIR/install.command" | head -1 | cut -d: -f1)
+check "§1: config written before app launch" \
+    "yes" "$( [ -n "$_cfg_line" ] && [ -n "$_open_line" ] && [ "$_cfg_line" -lt "$_open_line" ] && echo "yes" || echo "no")"
+
+# §2: CLT update failure produces a warning when compilation was requested
+check "§2: CLT failure warning when settings_result=Install" \
+    "yes" "$(grep -A5 '_clt_major.*_os_major' "$SCRIPT_DIR/install.command" | grep -q 'could not be updated\|Command Line Tools.*warning\|settings_result' && echo "yes" || echo "no")"
+
+# §3: softwareupdate admin prompt includes 'with prompt' for context
+check "§3: admin password prompt has 'with prompt'" \
+    "yes" "$(grep 'softwareupdate --install' "$SCRIPT_DIR/install.command" | grep -q 'with prompt' && echo "yes" || echo "no")"
+
+# §4: Single-instance guard using mkdir lock
+check "§4: single-instance lock directory created" \
+    "yes" "$(grep -q 'speak11_install.lock' "$SCRIPT_DIR/install.command" && \
+             grep -q 'mkdir.*LOCKDIR' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "§4: lock directory cleaned up in cleanup/trap" \
+    "yes" "$(grep -q 'rmdir.*LOCKDIR\|rm.*LOCKDIR' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "§4: stale lock detected via PID check" \
+    "yes" "$(grep -q 'kill -0.*holder\|cat.*lock.*pid' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# §5: Log file is appended, not truncated (preserves previous run errors)
+check "§5: log file not truncated (no : > \$_LOG_FILE)" \
+    "no" "$(grep -q '^: > "\$_LOG_FILE"' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "§5: log file has run separator" \
+    "yes" "$(grep -q 'Install run:' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# §6: Error extraction uses grep for actual errors, not just tail
+check "§6: mlx error extraction uses grep for error patterns" \
+    "yes" "$(grep '_mlx_err=' "$SCRIPT_DIR/install.command" | grep -q 'grep' && echo "yes" || echo "no")"
+
+# §7: Cleanup closes the installer's specific Terminal window, not front window
+check "§7: Terminal window ID captured at startup" \
+    "yes" "$(grep -q '_TERM_WINDOW_ID' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "§7: cleanup closes specific window by ID" \
+    "yes" "$(grep -q 'whose id is' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# §8: Fallback done dialog (no settings app) acknowledges partial install
+check "§8: fallback done mentions missing menu bar app on compile failure" \
+    "yes" "$(grep -q 'could not be compiled\|without settings app' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# §9: Re-install preserves user-customized config values
+check "§9: existing config preserved on re-install" \
+    "yes" "$(grep -q 'if.*-f.*config.*existing\|Existing.*config\|existing settings preserved\|preserve.*config\|read.*line.*config' "$SCRIPT_DIR/install.command" \
+        && echo "yes" || echo "no")"
+
+# §9 simulation: merge logic updates backend but preserves other fields
+_SIM_CONFIG=$(mktemp)
+cat > "$_SIM_CONFIG" << 'SIMCFG'
+TTS_BACKEND="local"
+TTS_BACKENDS_INSTALLED="local"
+VOICE_ID="custom-voice-id"
+MODEL_ID="eleven_multilingual_v2"
+STABILITY="0.80"
+SIMILARITY_BOOST="0.30"
+STYLE="0.60"
+USE_SPEAKER_BOOST="false"
+SPEED="1.3"
+LOCAL_VOICE="am_adam"
+LOCAL_SPEED="1.2"
+SIMCFG
+
+# Simulate the merge: update backend fields, preserve rest
+_SIM_OUT=$(mktemp)
+_CFG_BACKEND="auto"
+_CFG_INSTALLED="both"
+while IFS= read -r line; do
+    case "$line" in
+        TTS_BACKEND=*)           echo "TTS_BACKEND=\"$_CFG_BACKEND\"" ;;
+        TTS_BACKENDS_INSTALLED=*) echo "TTS_BACKENDS_INSTALLED=\"$_CFG_INSTALLED\"" ;;
+        *)                        echo "$line" ;;
+    esac
+done < "$_SIM_CONFIG" > "$_SIM_OUT"
+check "§9 sim: backend updated" \
+    "auto" "$(grep '^TTS_BACKEND=' "$_SIM_OUT" | cut -d'"' -f2)"
+check "§9 sim: backends_installed updated" \
+    "both" "$(grep '^TTS_BACKENDS_INSTALLED=' "$_SIM_OUT" | cut -d'"' -f2)"
+check "§9 sim: voice preserved" \
+    "custom-voice-id" "$(grep '^VOICE_ID=' "$_SIM_OUT" | cut -d'"' -f2)"
+check "§9 sim: speed preserved" \
+    "1.3" "$(grep '^SPEED=' "$_SIM_OUT" | cut -d'"' -f2)"
+check "§9 sim: local_voice preserved" \
+    "am_adam" "$(grep '^LOCAL_VOICE=' "$_SIM_OUT" | cut -d'"' -f2)"
+rm -f "$_SIM_CONFIG" "$_SIM_OUT"
+
+# §12: No set +e / set -e toggles — uses if/else for error handling
+check "§12: no set +e toggles in install.command" \
+    "0" "$(grep -c 'set +e' "$SCRIPT_DIR/install.command")"
+
+# §13: Terminal activate block guarded by _IS_TERMINAL_APP
+# The 'set miniaturized of front window to false' and 'activate' must be inside a guard
+check "§13: Terminal activate guarded by _IS_TERMINAL_APP" \
+    "yes" "$(awk '/IS_TERMINAL_APP.*then/{found=1} found && /miniaturized.*false/{ok=1} /fi/{found=0} END{print (ok?"yes":"no")}' "$SCRIPT_DIR/install.command")"
+
+# §14: Uninstaller copied to install directory
+check "§14: uninstall.command copied to install dir" \
+    "yes" "$(grep -q 'cp.*uninstall.command' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# §16: Login item check before adding (no duplicates)
+check "§16: login item checked before adding" \
+    "yes" "$(grep -q 'login item.*Speak11\|every login item' "$SCRIPT_DIR/install.command" \
+        | head -1 && grep 'login item' "$SCRIPT_DIR/install.command" | grep -q 'get\|name of\|count\|exists' && echo "yes" || echo "no")"
+
+# §4 simulation: mkdir lock atomicity
+_LOCKDIR=$(mktemp -d)/speak11_install.lock
+mkdir "$_LOCKDIR" 2>/dev/null
+echo "$$" > "$_LOCKDIR/pid"
+# Second attempt should fail
+check "§4 sim: mkdir lock rejects second instance" \
+    "no" "$(mkdir "$_LOCKDIR" 2>/dev/null && echo "yes" || echo "no")"
+# Stale lock with dead PID should be claimable
+echo "99999" > "$_LOCKDIR/pid"
+_stale_claimable="no"
+if ! mkdir "$_LOCKDIR" 2>/dev/null; then
+    _holder_pid=$(cat "$_LOCKDIR/pid" 2>/dev/null)
+    if [ -n "$_holder_pid" ] && ! kill -0 "$_holder_pid" 2>/dev/null; then
+        rm -rf "$_LOCKDIR"
+        mkdir "$_LOCKDIR" 2>/dev/null && _stale_claimable="yes"
+    fi
+fi
+check "§4 sim: stale lock (dead PID) can be reclaimed" \
+    "yes" "$_stale_claimable"
+rm -rf "$(dirname "$_LOCKDIR")"
+
+# §5 simulation: log append preserves previous content
+_SIM_LOG=$(mktemp)
+echo "PREVIOUS RUN ERROR: something failed" > "$_SIM_LOG"
+# Simulate the append logic
+if [ -f "$_SIM_LOG" ] && [ "$(stat -f%z "$_SIM_LOG" 2>/dev/null || echo 0)" -gt 1048576 ]; then
+    tail -500 "$_SIM_LOG" > "$_SIM_LOG.tmp" && mv "$_SIM_LOG.tmp" "$_SIM_LOG"
+fi
+printf '\n══ Install run: %s ══\n\n' "$(date)" >> "$_SIM_LOG"
+echo "NEW RUN OUTPUT" >> "$_SIM_LOG"
+check "§5 sim: previous log content preserved" \
+    "yes" "$(grep -q 'PREVIOUS RUN ERROR' "$_SIM_LOG" && echo "yes" || echo "no")"
+check "§5 sim: run separator present" \
+    "yes" "$(grep -q 'Install run:' "$_SIM_LOG" && echo "yes" || echo "no")"
+rm -f "$_SIM_LOG"
+
+# §6 simulation: error grep extracts actual errors
+_SIM_LOG2=$(mktemp)
+cat > "$_SIM_LOG2" << 'SIMLOG'
+Collecting mlx-audio
+  Downloading mlx-audio-0.1.0.tar.gz (1.2 MB)
+Building wheels for collected packages: mlx-audio
+  Building wheel for mlx-audio (setup.py): started
+ERROR: Could not find a version of scipy that satisfies the requirement
+ERROR: No matching distribution found for scipy>=1.10
+SIMLOG
+_grep_err=$(grep -iE '(^ERROR|^fatal|exception|failed|not found|no matching)' "$_SIM_LOG2" \
+    | tail -3 | tr '"\\' "'/" | head -c 500)
+check "§6 sim: grep extracts ERROR lines, not download progress" \
+    "yes" "$(echo "$_grep_err" | grep -q 'scipy' && echo "yes" || echo "no")"
+check "§6 sim: grep skips non-error lines" \
+    "no" "$(echo "$_grep_err" | grep -q 'Downloading' && echo "yes" || echo "no")"
+rm -f "$_SIM_LOG2"
+
 # ── 26. Backend submenu always visible ───────────────────────────
 
 section "Backend submenu always visible"
@@ -1643,7 +1829,7 @@ check "install.command: LOCAL_SPEED in default config" \
 check "tts_server.py: warmup uses bf_lily" \
     "yes" "$(grep -q 'bf_lily' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-# ── 33. MLX memory management ───────────────────────────────────
+# ── 35b. MLX memory management ──────────────────────────────────
 
 section "MLX memory management"
 
@@ -1662,7 +1848,7 @@ check "tts_server.py: deletes segments and audio arrays" \
 check "tts_server.py: clears cache on error path too" \
     "yes" "$(awk '/except Exception/,/raise/' "$TTS_SERVER" | grep -q 'clear_cache' && echo "yes" || echo "no")"
 
-# ── 34. Generation cancellation on client disconnect ─────────────
+# ── 35c. Generation cancellation on client disconnect ────────────
 
 section "Generation cancellation"
 
@@ -1690,7 +1876,7 @@ check "tts_server.py: CancelledError caught in handle_client" \
 check "tts_server.py: cancelled generation is logged" \
     "yes" "$(grep -q 'generation cancelled' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-# ── 35. Threaded client handling ─────────────────────────────────
+# ── 35d. Threaded client handling ────────────────────────────────
 
 section "Threaded client handling"
 

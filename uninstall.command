@@ -4,23 +4,37 @@
 
 set -e
 
+# Guard Terminal.app-specific AppleScript (user may use iTerm2, Warp, etc.)
+_IS_TERMINAL_APP=false
+[ "$TERM_PROGRAM" = "Apple_Terminal" ] && _IS_TERMINAL_APP=true
+
+# ── Capture Terminal window ID for cleanup ────────────────────────
+_TERM_WINDOW_ID=""
+if $_IS_TERMINAL_APP; then
+    _TERM_WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window' 2>/dev/null || true)
+fi
+
 # ── Cleanup ───────────────────────────────────────────────────────
 cleanup() {
-    osascript -e 'tell application "Terminal" to close front window' 2>/dev/null &
+    if $_IS_TERMINAL_APP && [ -n "$_TERM_WINDOW_ID" ]; then
+        osascript -e "tell application \"Terminal\" to close (every window whose id is $_TERM_WINDOW_ID)" 2>/dev/null &
+    fi
 }
 trap cleanup EXIT
 
 # ── Keep terminal in the background — user interacts via dialogs ──
-osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
+$_IS_TERMINAL_APP && osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
 
-result=$(osascript -e 'button returned of (display dialog "This will completely remove Speak11:\n\n  • Stop and remove the menu bar app\n  • Remove Accessibility permission\n  • Remove the speak script\n  • Remove the Services workflow\n  • Remove settings and config\n  • Remove the local TTS environment\n  • Remove the API key from Keychain\n  • Remove the login item (if set)" with title "Speak11" buttons {"Cancel", "Uninstall"} default button "Cancel" with icon caution)' 2>/dev/null)
+result=$(osascript -e 'button returned of (display dialog "This will completely remove Speak11:\n\n  • Stop and remove the menu bar app\n  • Remove Accessibility permission\n  • Remove the speak script\n  • Remove the Services workflow\n  • Remove settings and config\n  • Remove the local TTS environment\n  • Remove the API key from Keychain\n  • Remove the login item (if set)" with title "Speak11" buttons {"Cancel", "Uninstall"} default button "Cancel" with icon caution)' 2>/dev/null || true)
 [ "$result" = "Uninstall" ] || exit 0
 
 # ── Show terminal with progress ──────────────────────────────────
-osascript -e 'tell application "Terminal"
-    set miniaturized of front window to false
-    activate
-end tell' 2>/dev/null || true
+if $_IS_TERMINAL_APP; then
+    osascript -e 'tell application "Terminal"
+        set miniaturized of front window to false
+        activate
+    end tell' 2>/dev/null || true
+fi
 
 printf '\033[2J\033[H'
 printf '\n'
@@ -49,6 +63,7 @@ step "App bundle removed"
 rm -f "$HOME/.local/bin/speak.sh"
 rm -f "$HOME/.local/bin/tts_server.py"
 rm -f "$HOME/.local/bin/install-local.sh"
+rm -f "$HOME/.local/bin/uninstall.command"
 step "Scripts removed"
 
 # ── Remove the Services workflow ──────────────────────────────────
@@ -84,7 +99,10 @@ osascript -e 'tell application "System Events" to delete (every login item whose
 osascript -e 'tell application "System Events" to delete (every login item whose name is "Speak11 Settings")' 2>/dev/null || true
 step "Login item removed"
 
+# ── Remove installer lock if stale ────────────────────────────────
+rmdir /tmp/speak11_install.lock 2>/dev/null || rm -rf /tmp/speak11_install.lock 2>/dev/null || true
+
 printf '\n  \033[32mSpeak11 has been removed.\033[0m\n\n'
 
 # ── Done ──────────────────────────────────────────────────────────
-osascript -e 'display dialog "Speak11 has been removed.\n\nIf you assigned a Services keyboard shortcut, remove it manually:\nSystem Settings → Keyboard → Keyboard Shortcuts → Services" with title "Speak11" buttons {"Done"} default button "Done" with icon note' 2>/dev/null
+osascript -e 'display dialog "Speak11 has been removed.\n\nIf you assigned a Services keyboard shortcut, remove it manually:\nSystem Settings → Keyboard → Keyboard Shortcuts → Services" with title "Speak11" buttons {"Done"} default button "Done" with icon note' 2>/dev/null || true

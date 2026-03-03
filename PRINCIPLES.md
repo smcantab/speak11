@@ -342,6 +342,7 @@ This is passed via `${LOCAL_VOICE:0:1}` in bash.
 | `~/.local/bin/speak.sh` | Installed speak script |
 | `~/.local/bin/tts_server.py` | Installed daemon |
 | `~/.local/bin/install-local.sh` | Installed local TTS installer |
+| `~/.local/bin/uninstall.command` | Installed uninstaller |
 | `~/.local/share/speak11/venv/` | Python venv with mlx-audio |
 | `~/.local/share/speak11/tts.sock` | Daemon Unix socket |
 | `~/.local/share/speak11/tts_server.pid` | Daemon PID file |
@@ -353,6 +354,7 @@ This is passed via `${LOCAL_VOICE:0:1}` in bash.
 | `$TMPDIR/speak11_status` | Playback position for respeak |
 | `~/Applications/Speak11.app` | Compiled menu bar app |
 | `~/Library/Services/Speak Selection.workflow` | Automator Quick Action |
+| `/tmp/speak11_install.lock` | Installer single-instance lock |
 
 
 ## Testing
@@ -446,7 +448,29 @@ Interrupt tests use `_run_interrupt_test` which:
     CLT version doesn't match the macOS version.
 
 14. **Installer dialogs must not abort on failure.** Every `$(osascript ...)`
-    call in install.command must end with `|| true`. Without it, `set -e` silently
-    kills the installer when a user presses Escape or osascript fails. Error
-    messages interpolated into osascript strings must be sanitized with
-    `tr '"\\' "'/"` to prevent quote injection.
+    call in install.command and uninstall.command must end with `|| true`. Without
+    it, `set -e` silently kills the script when a user presses Escape or osascript
+    fails. Error messages interpolated into osascript strings must be sanitized
+    with `tr '"\\' "'/"` to prevent quote injection.
+
+15. **No `set +e` toggles in install.command.** Use `if cmd; then ok=0; else
+    ok=$?; fi` instead of `set +e; cmd; rc=$?; set -e`. The `if` pattern is
+    clearer about intent and doesn't leave a window where failures are silently
+    ignored.
+
+16. **Installer is single-instance.** `mkdir /tmp/speak11_install.lock` acts as
+    an atomic lock. Stale locks (dead PID) are reclaimed. The lock is removed in
+    the EXIT trap.
+
+17. **Re-install preserves user config.** When `~/.config/speak11/config` already
+    exists, the installer updates only `TTS_BACKEND` and `TTS_BACKENDS_INSTALLED`.
+    All other fields (voice, speed, stability, etc.) are preserved.
+
+18. **Config is written before the app launches.** The config write block must
+    appear before `open "$APP_BUNDLE"` to avoid a first-run race where the Swift
+    app reads stale defaults.
+
+19. **Terminal.app calls must be guarded.** Both install.command and
+    uninstall.command use `$_IS_TERMINAL_APP` to skip Terminal.app-specific
+    AppleScript when the user runs the script in iTerm2, Warp, or another
+    terminal. Cleanup closes the specific window by ID, not `front window`.

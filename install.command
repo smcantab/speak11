@@ -13,6 +13,26 @@ WORKFLOW_NAME="Speak Selection.workflow"
 _IS_TERMINAL_APP=false
 [ "$TERM_PROGRAM" = "Apple_Terminal" ] && _IS_TERMINAL_APP=true
 
+# ── Single-instance guard ─────────────────────────────────────────
+_LOCKDIR="/tmp/speak11_install.lock"
+if ! mkdir "$_LOCKDIR" 2>/dev/null; then
+    _holder_pid=$(cat "$_LOCKDIR/pid" 2>/dev/null)
+    if [ -n "$_holder_pid" ] && kill -0 "$_holder_pid" 2>/dev/null; then
+        osascript -e 'display dialog "The Speak11 installer is already running." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null || true
+        exit 0
+    fi
+    # Stale lock — previous installer crashed. Remove and continue.
+    rm -rf "$_LOCKDIR"
+    mkdir "$_LOCKDIR" 2>/dev/null || exit 1
+fi
+echo "$$" > "$_LOCKDIR/pid"
+
+# ── Capture Terminal window ID for cleanup ────────────────────────
+_TERM_WINDOW_ID=""
+if $_IS_TERMINAL_APP; then
+    _TERM_WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window' 2>/dev/null || true)
+fi
+
 # ── Cleanup ───────────────────────────────────────────────────────
 _spinner_pid=""
 
@@ -20,7 +40,10 @@ cleanup() {
     tput cnorm 2>/dev/null || true
     [ -n "$_spinner_pid" ] && kill "$_spinner_pid" 2>/dev/null || true
     wait 2>/dev/null || true
-    $_IS_TERMINAL_APP && osascript -e 'tell application "Terminal" to close front window' 2>/dev/null &
+    rmdir "$_LOCKDIR" 2>/dev/null || rm -rf "$_LOCKDIR" 2>/dev/null || true
+    if $_IS_TERMINAL_APP && [ -n "$_TERM_WINDOW_ID" ]; then
+        osascript -e "tell application \"Terminal\" to close (every window whose id is $_TERM_WINDOW_ID)" 2>/dev/null &
+    fi
 }
 trap cleanup EXIT
 
@@ -93,10 +116,12 @@ fi
 settings_result=$(osascript -e 'button returned of (display dialog "Install the Speak11 app?\n\nAdds a waveform icon to your menu bar to change voice, model, and speed without editing any files." with title "Speak11" buttons {"Skip", "Install"} default button "Install" with icon note)' 2>/dev/null || true)
 
 # ── Show terminal with progress ──────────────────────────────────
-osascript -e 'tell application "Terminal"
-    set miniaturized of front window to false
-    activate
-end tell' 2>/dev/null || true
+if $_IS_TERMINAL_APP; then
+    osascript -e 'tell application "Terminal"
+        set miniaturized of front window to false
+        activate
+    end tell' 2>/dev/null || true
+fi
 
 header
 
@@ -117,7 +142,12 @@ fi
 _LOG_DIR="$HOME/.local/share/speak11"
 _LOG_FILE="$_LOG_DIR/install.log"
 mkdir -p "$_LOG_DIR"
-: > "$_LOG_FILE"
+# Append to existing log (preserves previous run errors for debugging).
+# Truncate only if over 1 MB to prevent unbounded growth.
+if [ -f "$_LOG_FILE" ] && [ "$(stat -f%z "$_LOG_FILE" 2>/dev/null || echo 0)" -gt 1048576 ]; then
+    tail -500 "$_LOG_FILE" > "$_LOG_FILE.tmp" && mv "$_LOG_FILE.tmp" "$_LOG_FILE"
+fi
+printf '\n══ Install run: %s ══\n\n' "$(date)" >> "$_LOG_FILE"
 
 # ── Ensure Xcode Command Line Tools match macOS version ──────────
 _os_major=$(sw_vers -productVersion | cut -d. -f1)
@@ -133,10 +163,10 @@ if [ -z "$_clt_major" ] || [ "$_clt_major" != "$_os_major" ]; then
 
     if [ -n "$_clt_label" ]; then
         spin "Installing $_clt_label (this may take a few minutes)…"
-        set +e
-        osascript -e "do shell script \"softwareupdate --install \\\"$_clt_label\\\"\" with administrator privileges" \
-            >> "$_LOG_FILE" 2>&1
-        set -e
+        if osascript -e "do shell script \"softwareupdate --install \\\"$_clt_label\\\"\" with prompt \"Speak11 needs to update Command Line Tools to compile the settings app.\" with administrator privileges" \
+            >> "$_LOG_FILE" 2>&1; then
+            :
+        fi
         unspin
     fi
 
@@ -146,22 +176,28 @@ if [ -z "$_clt_major" ] || [ "$_clt_major" != "$_os_major" ]; then
         | awk '/version:/{print $2}' | cut -d. -f1)
     if [ "$_clt_major" = "$_os_major" ]; then
         step "Command Line Tools updated"
+    elif [ "${settings_result:-}" = "Install" ]; then
+        printf '  \033[33m⚠\033[0m  Command Line Tools could not be updated\n'
+        printf '      The settings app may fail to compile.\n'
     fi
 fi
 
 # ── Install mlx-audio (Both or Local Only on Apple Silicon) ──────
 if $IS_ARM64 && [ "$BACKEND_CHOICE" != "ElevenLabs Only" ]; then
     spin "Installing mlx-audio and downloading Kokoro model…"
-    set +e
-    bash "$SCRIPT_DIR/install-local.sh" >> "$_LOG_FILE" 2>&1
-    mlx_ok=$?
-    set -e
+    if bash "$SCRIPT_DIR/install-local.sh" >> "$_LOG_FILE" 2>&1; then
+        mlx_ok=0
+    else
+        mlx_ok=$?
+    fi
     unspin
     if [ $mlx_ok -eq 0 ]; then
         step "mlx-audio installed"
     else
         printf '  \033[31m✗\033[0m  mlx-audio installation failed\n'
-        _mlx_err=$(tail -5 "$_LOG_FILE" 2>/dev/null | head -3 | tr '"\\' "'/")
+        _mlx_err=$(grep -iE '(^ERROR|^fatal|exception|failed|not found|no matching)' "$_LOG_FILE" \
+            | tail -3 | tr '"\\' "'/" | head -c 500)
+        [ -z "$_mlx_err" ] && _mlx_err=$(tail -3 "$_LOG_FILE" 2>/dev/null | tr '"\\' "'/")
         if [ "$BACKEND_CHOICE" = "Local Only" ]; then
             osascript -e "display dialog \"Could not install local TTS.\n\n${_mlx_err:-An internet connection is required for the first install.}\n\nFull log: ~/.local/share/speak11/install.log\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon stop" 2>/dev/null || true
             exit 1
@@ -176,6 +212,10 @@ mkdir -p "$INSTALL_DIR"
 cp -f "$SCRIPT_DIR/speak.sh" "$INSTALL_DIR/speak.sh"
 cp -f "$SCRIPT_DIR/tts_server.py" "$INSTALL_DIR/tts_server.py"
 cp -f "$SCRIPT_DIR/install-local.sh" "$INSTALL_DIR/install-local.sh"
+if [ -f "$SCRIPT_DIR/uninstall.command" ]; then
+    cp -f "$SCRIPT_DIR/uninstall.command" "$INSTALL_DIR/uninstall.command"
+    chmod +x "$INSTALL_DIR/uninstall.command"
+fi
 chmod +x "$INSTALL_DIR/speak.sh" "$INSTALL_DIR/install-local.sh"
 step "Scripts copied to ~/.local/bin"
 
@@ -398,6 +438,59 @@ END_WFLOW
 
 step "Quick Action created"
 
+# ── Write config (before building the app — avoids first-run race) ─
+# install-local.sh may have created a partial config earlier;
+# this ensures correct values for the chosen backend.
+mkdir -p "$HOME/.config/speak11"
+case "$BACKEND_CHOICE" in
+    "ElevenLabs Only")
+        _CFG_BACKEND="elevenlabs"
+        _CFG_INSTALLED="elevenlabs"
+        ;;
+    "Both")
+        _CFG_BACKEND="auto"
+        if [ "${mlx_ok:-1}" -eq 0 ]; then
+            _CFG_INSTALLED="both"
+        else
+            _CFG_INSTALLED="elevenlabs"
+        fi
+        ;;
+    "Local Only")
+        _CFG_BACKEND="local"
+        _CFG_INSTALLED="local"
+        ;;
+esac
+
+_EXISTING_CONFIG="$HOME/.config/speak11/config"
+if [ -f "$_EXISTING_CONFIG" ]; then
+    # Re-install: update backend fields, preserve user customizations
+    _TMPCONF=$(mktemp)
+    while IFS= read -r line; do
+        case "$line" in
+            TTS_BACKEND=*)           echo "TTS_BACKEND=\"$_CFG_BACKEND\"" ;;
+            TTS_BACKENDS_INSTALLED=*) echo "TTS_BACKENDS_INSTALLED=\"$_CFG_INSTALLED\"" ;;
+            *)                        echo "$line" ;;
+        esac
+    done < "$_EXISTING_CONFIG" > "$_TMPCONF"
+    mv "$_TMPCONF" "$_EXISTING_CONFIG"
+    step "Config updated (existing settings preserved)"
+else
+    cat > "$_EXISTING_CONFIG" << CFGEOF
+TTS_BACKEND="$_CFG_BACKEND"
+TTS_BACKENDS_INSTALLED="$_CFG_INSTALLED"
+VOICE_ID="pFZP5JQG7iQjIQuC4Bku"
+MODEL_ID="eleven_flash_v2_5"
+STABILITY="0.5"
+SIMILARITY_BOOST="0.75"
+STYLE="0.0"
+USE_SPEAKER_BOOST="true"
+SPEED="1.0"
+LOCAL_VOICE="bf_lily"
+LOCAL_SPEED="1.0"
+CFGEOF
+    step "Default config created"
+fi
+
 # ── Build and install settings menu bar app ───────────────────────
 if [ "$settings_result" = "Install" ]; then
     APP_BUNDLE="$HOME/Applications/Speak11.app"
@@ -407,17 +500,19 @@ if [ "$settings_result" = "Install" ]; then
 
     # Compile — use xcrun for proper SDK resolution
     spin "Compiling app…"
-    compile_ok=0
-    set +e
-    xcrun swiftc "$SCRIPT_DIR/Speak11.swift" -o "$APP_BINARY" -O 2>>"$_LOG_FILE"
-    compile_ok=$?
-    set -e
+    if xcrun swiftc "$SCRIPT_DIR/Speak11.swift" -o "$APP_BINARY" -O 2>>"$_LOG_FILE"; then
+        compile_ok=0
+    else
+        compile_ok=$?
+    fi
     unspin
 
     if [ $compile_ok -ne 0 ]; then
         printf '  \033[31m✗\033[0m  Compilation failed\n'
         printf '\n'
-        _swift_err=$(tail -5 "$_LOG_FILE" 2>/dev/null | head -3 | tr '"\\' "'/")
+        _swift_err=$(grep -iE '(^error|^fatal|cannot|undefined|no such)' "$_LOG_FILE" \
+            | tail -3 | tr '"\\' "'/" | head -c 500)
+        [ -z "$_swift_err" ] && _swift_err=$(tail -3 "$_LOG_FILE" 2>/dev/null | tr '"\\' "'/")
         _swift_ver=$(xcrun swiftc --version 2>/dev/null | head -1 || echo "swiftc not found")
         printf '  Swift: %s\n' "$_swift_ver" >> "$_LOG_FILE"
         osascript -e "display dialog \"Could not compile the settings app.\n\n${_swift_err:-Unknown error.}\n\nTry updating Xcode Command Line Tools:\n  sudo rm -rf /Library/Developer/CommandLineTools\n  xcode-select --install\n\nFull log: ~/.local/share/speak11/install.log\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon caution" 2>/dev/null || true
@@ -486,11 +581,10 @@ for (n,name) in [(16,"icon_16x16"),(32,"icon_16x16@2x"),(32,"icon_32x32"),
     if let d = px(n) { try? d.write(to:URL(fileURLWithPath:"\(dir)/\(name).png")) }
 }
 SWIFT_END
-        set +e
-        xcrun swift "$_ICONSCRIPT" "$_ICONSET" 2>/dev/null && \
+        if xcrun swift "$_ICONSCRIPT" "$_ICONSET" 2>/dev/null; then
             iconutil -c icns "$_ICONSET" \
-                -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns" 2>/dev/null
-        set -e
+                -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns" 2>/dev/null || true
+        fi
         rm -f "$_ICONSCRIPT"
         rm -rf "$_ICONTMP"
         unspin
@@ -502,52 +596,18 @@ SWIFT_END
 
         printf '\n  \033[32mInstallation complete.\033[0m\n\n'
 
-        # Offer login item
-        login_result=$(osascript -e 'button returned of (display dialog "Launch Speak11 automatically at login?" with title "Speak11" buttons {"Not Now", "Yes"} default button "Yes" with icon note)' 2>/dev/null || true)
-        if [ "$login_result" = "Yes" ]; then
-            osascript -e "tell application \"System Events\" to make login item at end with properties {path:\"$APP_BUNDLE\", hidden:true}" 2>/dev/null || true
+        # Offer login item (skip if already added from a previous install)
+        _has_login_item=$(osascript -e 'tell application "System Events" to get the name of every login item' 2>/dev/null | grep -c "Speak11" || true)
+        if [ "$_has_login_item" -eq 0 ] 2>/dev/null; then
+            login_result=$(osascript -e 'button returned of (display dialog "Launch Speak11 automatically at login?" with title "Speak11" buttons {"Not Now", "Yes"} default button "Yes" with icon note)' 2>/dev/null || true)
+            if [ "$login_result" = "Yes" ]; then
+                osascript -e "tell application \"System Events\" to make login item at end with properties {path:\"$APP_BUNDLE\", hidden:true}" 2>/dev/null || true
+            fi
         fi
 
         open "$APP_BUNDLE" || true
     fi
 fi
-
-# ── Write config (unconditional — needed regardless of settings app) ─
-# install-local.sh may have created a partial config earlier;
-# this ensures correct values for the chosen backend.
-mkdir -p "$HOME/.config/speak11"
-case "$BACKEND_CHOICE" in
-    "ElevenLabs Only")
-        _CFG_BACKEND="elevenlabs"
-        _CFG_INSTALLED="elevenlabs"
-        ;;
-    "Both")
-        _CFG_BACKEND="auto"
-        if [ "${mlx_ok:-1}" -eq 0 ]; then
-            _CFG_INSTALLED="both"
-        else
-            _CFG_INSTALLED="elevenlabs"
-        fi
-        ;;
-    "Local Only")
-        _CFG_BACKEND="local"
-        _CFG_INSTALLED="local"
-        ;;
-esac
-cat > "$HOME/.config/speak11/config" << CFGEOF
-TTS_BACKEND="$_CFG_BACKEND"
-TTS_BACKENDS_INSTALLED="$_CFG_INSTALLED"
-VOICE_ID="pFZP5JQG7iQjIQuC4Bku"
-MODEL_ID="eleven_flash_v2_5"
-STABILITY="0.5"
-SIMILARITY_BOOST="0.75"
-STYLE="0.0"
-USE_SPEAKER_BOOST="true"
-SPEED="1.0"
-LOCAL_VOICE="bf_lily"
-LOCAL_SPEED="1.0"
-CFGEOF
-step "Default config created"
 
 # ── Done ──────────────────────────────────────────────────────────
 if [ "${settings_result:-}" = "Install" ] && [ "${compile_ok:-1}" -eq 0 ]; then
@@ -556,6 +616,12 @@ if [ "${settings_result:-}" = "Install" ] && [ "${compile_ok:-1}" -eq 0 ]; then
         _DONE_MSG="$_DONE_MSG\n\nLocal TTS is ready — the Kokoro voice model has been downloaded."
     fi
     osascript -e "display dialog \"$_DONE_MSG\" with title \"Speak11\" buttons {\"Done\"} default button \"Done\" with icon note" 2>/dev/null || true
+elif [ "${settings_result:-}" = "Install" ] && [ "${compile_ok:-1}" -ne 0 ]; then
+    printf '\n  \033[32mInstallation complete (without settings app).\033[0m\n\n'
+    result=$(osascript -e 'button returned of (display dialog "Speak11 is installed, but the menu bar app could not be compiled.\n\nYou can still use Speak11 by assigning a keyboard shortcut:\n\n1. System Settings will open\n2. Go to Keyboard Shortcuts → Services → Text\n3. Find \"Speak Selection\" and assign a shortcut\n\nSuggested: ⌃⌥S (Control+Option+S)\n\nTo get the menu bar app, update Xcode Command Line Tools and re-run the installer." with title "Speak11" buttons {"Done", "Open System Settings"} default button "Open System Settings" with icon caution)' 2>/dev/null || true)
+    if [ "${result:-}" = "Open System Settings" ]; then
+        open "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts"
+    fi
 else
     printf '\n  \033[32mInstallation complete.\033[0m\n\n'
     result=$(osascript -e 'button returned of (display dialog "Speak11 is installed!\n\nOne last step: assign a keyboard shortcut.\n\n1. System Settings will open\n2. Go to Keyboard Shortcuts → Services → Text\n3. Find \"Speak Selection\" and double-click to assign a shortcut\n\nSuggested: ⌃⌥S (Control+Option+S)" with title "Speak11" buttons {"Done", "Open System Settings"} default button "Open System Settings" with icon note)' 2>/dev/null || true)
