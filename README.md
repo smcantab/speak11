@@ -25,7 +25,7 @@
 
 ## Installation
 
-1. [Download the repository](../../archive/refs/heads/main.zip) and unzip it
+1. [Download the latest release](../../releases/latest/download/speak11.zip) and unzip it
 2. Double-click **`install.command`**
 3. Click **Continue**, then choose your backend: **ElevenLabs Only**, **Both** (recommended), or **Local Only** (Apple Silicon only)
 4. Paste your API key if prompted
