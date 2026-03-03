@@ -3818,9 +3818,9 @@ rm -rf "$_STUBS" "$_TESTTMP"
 
 section "STATUS_FILE fractional epoch"
 
-# play_audio must write fractional epoch (not integer date +%s)
-check "play_audio: writes fractional epoch to STATUS_FILE" \
-    "yes" "$(awk '/^play_audio\(\)/,/^}/' "$SPEAK_SH" | grep -qE 'perl.*time|python.*time\(\)|date.*%s%.?%N' && echo "yes" || echo "no")"
+# STATUS_FILE epoch must be fractional (from _BASE_EPOCH which is set with perl Time::HiRes)
+check "speak.sh: _BASE_EPOCH set with perl Time::HiRes" \
+    "yes" "$(grep -q '_BASE_EPOCH=.*perl.*Time::HiRes' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Functional: STATUS_FILE first line has decimal point
 _STUBS=$(mktemp -d)
@@ -3999,6 +3999,157 @@ check "speak.sh: kill-wait uses sleep 0.05" \
 # Loop should check more times (10 iterations at 0.05s = 500ms budget)
 check "speak.sh: kill-wait has 10 iterations" \
     "yes" "$(grep -q 'for _i in 1 2 3 4 5 6 7 8 9 10' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# ── 60. Zero-fork epoch in play_audio ─────────────────────────────
+
+section "Zero-fork epoch in play_audio (no per-sentence perl)"
+
+# play_audio must NOT fork perl on every call — use cached epoch + $SECONDS
+check "speak.sh: no perl fork in play_audio" \
+    "0" "$(sed -n '/^play_audio() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -c 'perl' || true)"
+
+# _BASE_EPOCH must be computed once before the pipeline loop
+check "speak.sh: _BASE_EPOCH set before pipeline" \
+    "yes" "$(grep -q '_BASE_EPOCH=' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# play_audio should use SECONDS-based epoch (no fork)
+check "speak.sh: play_audio uses SECONDS-based epoch" \
+    "yes" "$(sed -n '/^play_audio() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -q 'SECONDS\|_BASE_EPOCH' && echo "yes" || echo "no")"
+
+# ── 61. Zero-fork wav_duration ───────────────────────────────────
+
+section "Zero-fork wav_duration (bash arithmetic, no bc)"
+
+# wav_duration must NOT fork bc — use bash $(( )) arithmetic
+check "speak.sh: wav_duration uses bash arithmetic (no bc)" \
+    "0" "$(sed -n '/^wav_duration() *{/,/^}/p' "$SPEAK_SH" | grep -c '| *bc' || true)"
+
+# Functional: verify wav_duration still calculates correct duration
+eval "$(sed -n '/^wav_duration() *{/,/^}/p' "$SPEAK_SH")" 2>/dev/null || true
+_WAV_TMP=$(mktemp "${TMPDIR:-/tmp/}speak11_test_XXXXXXXXXX.wav")
+python3 -c "
+import struct, sys
+sr = 24000; ch = 1; bps = 16; n = 115200  # 4.8 seconds
+data_size = n * ch * (bps // 8)
+with open(sys.argv[1], 'wb') as f:
+    f.write(b'RIFF')
+    f.write(struct.pack('<I', 36 + data_size))
+    f.write(b'WAVEfmt ')
+    f.write(struct.pack('<IHHIIHH', 16, 1, ch, sr, sr*ch*(bps//8), ch*(bps//8), bps))
+    f.write(b'data')
+    f.write(struct.pack('<I', data_size))
+    f.write(b'\x00' * data_size)
+" "$_WAV_TMP"
+if type wav_duration &>/dev/null; then
+    _CALC_DUR=$(wav_duration "$_WAV_TMP" 2>/dev/null || echo "fail")
+    # 230400 data bytes / 48000 bytes_per_sec = 4.800 seconds
+    check "wav_duration: correct for 24kHz WAV (expect ~4.800)" \
+        "yes" "$(echo "$_CALC_DUR" | awk '{if ($1 >= 4.5 && $1 <= 5.1) print "yes"; else print "no"}')"
+else
+    check "wav_duration: correct for 24kHz WAV (expect ~4.800)" "yes" "function not found"
+fi
+rm -f "$_WAV_TMP"
+
+# ── 62. Respeak simulation ──────────────────────────────────────
+
+section "Respeak: position-aware resumption (end-to-end simulation)"
+
+# Simulate the full respeak pipeline:
+# 1. speak.sh writes STATUS_FILE with per-sentence offset/len
+# 2. Swift reads STATUS_FILE + TEXT_FILE, computes remaining text
+# 3. Remaining text should start at roughly the correct sentence
+
+_RESP_TMP=$(mktemp -d)
+_RESP_TEXT="The morning light filtered through the kitchen window as she poured her first cup of coffee. Outside, the garden was coming alive with the first signs of spring and the birds were singing. She sat down at the table and opened her notebook to write. There were lists to make, plans to finalize, and a letter she had been meaning to write for weeks."
+
+# Write TEXT_FILE
+printf '%s' "$_RESP_TEXT" > "$_RESP_TMP/text"
+
+# Simulate STATUS_FILE as if we're 50% through sentence 2
+# Sentence 2: "Outside, the garden..." starts at offset 93, length 95
+# ratio = 0.5 → approxCharPos = 93 + 95*0.5 ≈ 140
+_now_epoch=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time')
+_duration="4.000"
+# elapsed = 2.0s → ratio = 2.0/4.0 = 0.5
+_start_epoch=$(echo "$_now_epoch" | awk '{printf "%.3f", $1 - 2.0}')
+printf '%s\n%s\n%s\n%s\n' "$_start_epoch" "$_duration" "93" "95" > "$_RESP_TMP/status"
+
+# Run the Swift calculateRemainingText logic in a bash simulation
+_sim_remaining() {
+    local text="$1" status_file="$2"
+    local lines start_time duration elapsed ratio
+    IFS=$'\n' read -d '' -ra lines < "$status_file" || true
+    start_time="${lines[0]}"
+    duration="${lines[1]}"
+    local char_offset="${lines[2]}"
+    local sent_len="${lines[3]}"
+
+    elapsed=$(echo "$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time') $start_time" | awk '{printf "%.3f", $1 - $2}')
+    ratio=$(echo "$elapsed $duration" | awk '{r=$1/$2; if(r<0)r=0; if(r>1)r=1; printf "%.3f", r}')
+
+    local text_len=${#text}
+    [ "$text_len" -lt 100 ] && { echo "$text"; return; }
+
+    local approx_pos
+    if [ -n "$char_offset" ] && [ -n "$sent_len" ] && [ "$sent_len" -gt 0 ]; then
+        approx_pos=$(echo "$char_offset $sent_len $ratio" | awk '{printf "%d", $1 + $2 * $3}')
+    else
+        approx_pos=$(echo "$text_len $ratio" | awk '{printf "%d", $1 * $2}')
+    fi
+
+    [ "$approx_pos" -ge $((text_len - 50)) ] && { echo "$text"; return; }
+
+    # Find nearest sentence boundary at or after approx_pos
+    local search_start=$((approx_pos > 20 ? approx_pos - 20 : 0))
+    local tail="${text:$search_start}"
+    local i best_pos=""
+    for (( i=0; i<${#tail}; i++ )); do
+        local abs_pos=$((search_start + i))
+        [ "$abs_pos" -lt "$approx_pos" ] && continue
+        local prev_char="${tail:$((i-1)):1}"
+        local cur_char="${tail:$i:1}"
+        if [ "$i" -gt 0 ] && [[ "$prev_char" == [.!?] ]] && [[ "$cur_char" == [[:space:]] ]]; then
+            best_pos=$abs_pos
+            break
+        fi
+        [ $((abs_pos - approx_pos)) -gt 200 ] && { best_pos=$approx_pos; break; }
+    done
+    [ -z "$best_pos" ] && best_pos=$approx_pos
+    echo "${text:$best_pos}"
+}
+
+_REMAINING=$(_sim_remaining "$_RESP_TEXT" "$_RESP_TMP/status")
+
+# The remaining text should NOT be the full text (that would mean restart)
+check "respeak: remaining text is not full text (no restart)" \
+    "yes" "$([ "$_REMAINING" != "$_RESP_TEXT" ] && echo "yes" || echo "no")"
+
+# The remaining text should contain sentence 3+ ("She sat down" or "There were")
+check "respeak: remaining text contains later sentences" \
+    "yes" "$(echo "$_REMAINING" | grep -q 'She sat down\|There were' && echo "yes" || echo "no")"
+
+# The remaining text should NOT start with sentence 1
+check "respeak: remaining text does not contain first sentence" \
+    "no" "$(echo "$_REMAINING" | grep -q 'morning light' && echo "yes" || echo "no")"
+
+# Simulate near end of last sentence: offset=249, len=98, 90% through
+_start_epoch2=$(echo "$_now_epoch" | awk '{printf "%.3f", $1 - 3.6}')
+printf '%s\n%s\n%s\n%s\n' "$_start_epoch2" "$_duration" "249" "98" > "$_RESP_TMP/status"
+_REMAINING2=$(_sim_remaining "$_RESP_TEXT" "$_RESP_TMP/status")
+
+# Near end of last sentence should return full text (restart from beginning)
+check "respeak: near end of text restarts from beginning" \
+    "yes" "$([ "$_REMAINING2" = "$_RESP_TEXT" ] && echo "yes" || echo "no")"
+
+# Simulate with 2-line STATUS_FILE (fallback, no offset/len)
+printf '%s\n%s\n' "$_start_epoch" "$_duration" > "$_RESP_TMP/status"
+_REMAINING3=$(_sim_remaining "$_RESP_TEXT" "$_RESP_TMP/status")
+
+# Fallback should still work (uses text.count * ratio)
+check "respeak: 2-line STATUS_FILE fallback works" \
+    "yes" "$([ -n "$_REMAINING3" ] && echo "yes" || echo "no")"
+
+rm -rf "$_RESP_TMP"
 
 # ── Summary ──────────────────────────────────────────────────────
 

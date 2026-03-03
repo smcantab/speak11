@@ -341,8 +341,10 @@ play_audio() {
         duration=$(wav_duration "$TMP_FILE" 2>/dev/null)
     fi
     [ -z "$duration" ] && duration=$(afinfo "$TMP_FILE" 2>/dev/null | awk '/estimated duration/{print $3}')
-    # Fractional epoch for accurate respeak position (date +%s is integer-only on macOS)
-    printf '%s\n%s\n%s\n%s\n' "$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time')" "${duration:-0}" "${1:-0}" "${2:-0}" > "$STATUS_FILE"
+    # Epoch from cached base + $SECONDS offset (zero fork per sentence).
+    # _BASE_EPOCH (e.g. "1772511783.546") was set once before the pipeline loop.
+    local _epoch_int=$(( ${_BASE_EPOCH%%.*} + SECONDS - _BASE_SECONDS ))
+    printf '%s.%s\n%s\n%s\n%s\n' "$_epoch_int" "${_BASE_EPOCH#*.}" "${duration:-0}" "${1:-0}" "${2:-0}" > "$STATUS_FILE"
     afplay "$TMP_FILE" &
     PLAY_PID=$!
 }
@@ -365,12 +367,13 @@ json_encode() {
     printf '"%s"' "$s"
 }
 
-# ── WAV duration from file size (no afinfo fork) ─────────────────
+# ── WAV duration from file size (no afinfo/bc fork) ──────────────
 # Kokoro outputs 24kHz mono 16-bit WAV: bytes_per_sec = 48000.
 wav_duration() {
     local bytes
     bytes=$(stat -f%z "$1" 2>/dev/null) || return 1
-    echo "scale=6; ($bytes - 44) / 48000" | bc
+    local ms=$(( (bytes - 44) * 1000 / 48000 ))
+    printf '%d.%03d' "$((ms / 1000))" "$((ms % 1000))"
 }
 
 # ── ElevenLabs single-sentence helper ─────────────────────────────
@@ -423,6 +426,11 @@ run_elevenlabs_tts() {
 #   - Local: first sentence plays quickly (avoids long phonemization)
 #   - Cloud: only played sentences are billed (cancel saves credits)
 _SENTENCES=$(split_sentences "$TEXT")
+
+# Cache epoch once so play_audio doesn't fork perl on every sentence.
+# play_audio uses: _BASE_EPOCH + (SECONDS - _BASE_SECONDS)
+_BASE_EPOCH=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time')
+_BASE_SECONDS=$SECONDS
 
 if [ "$TTS_BACKEND" = "local" ]; then
     # ── Local TTS (mlx-audio / Kokoro) ───────────────────────────
