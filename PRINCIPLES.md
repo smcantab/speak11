@@ -546,3 +546,10 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
     speak.sh falls back to cold model loading (~3s). `tests/profile.sh`
     checks for this and prints a warning so silent fallbacks don't go
     unnoticed.
+
+24. **Releases decouple users from HEAD.** Download links point to
+    `releases/latest/download/speak11.zip`, not the main branch archive.
+    To cut a new release:
+    `git archive --format=zip --prefix=speak11/ -o /tmp/speak11.zip HEAD`
+    then `gh release create vX.Y.Z /tmp/speak11.zip --title "Speak11 vX.Y.Z" --notes "..."`.
+    The `/latest/` URL auto-resolves to the newest release.
