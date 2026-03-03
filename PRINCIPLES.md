@@ -13,7 +13,7 @@ Speak11 has four components:
 | `speak.sh` | Bash | TTS orchestrator. Reads text, splits into sentences, generates audio, plays it. |
 | `Speak11.swift` | Swift/AppKit | Menu bar app. Global hotkey, settings UI, config file, respeak. |
 | `tts_server.py` | Python | Persistent Kokoro daemon. Keeps the model in memory for instant response. |
-| `install.command` | Bash | Interactive installer. Dialogs, backend choice, Keychain, app compile. |
+| `install.command` | Bash | Interactive installer. Dialogs, backend choice, CLT auto-update, Keychain, app compile. |
 
 Data flows one way: **Swift -> speak.sh -> tts_server.py**.
 The Swift app launches speak.sh as a subprocess. speak.sh connects to the daemon
@@ -347,6 +347,7 @@ This is passed via `${LOCAL_VOICE:0:1}` in bash.
 | `~/.local/share/speak11/tts_server.pid` | Daemon PID file |
 | `~/.local/share/speak11/tts_server.lock` | Daemon flock file |
 | `~/.local/share/speak11/tts.log` | Shared log file |
+| `~/.local/share/speak11/install.log` | Installer error log (pip, swiftc output) |
 | `$TMPDIR/speak11_tts.pid` | speak.sh PID file |
 | `$TMPDIR/speak11_text` | Full text for respeak |
 | `$TMPDIR/speak11_status` | Playback position for respeak |
@@ -439,3 +440,13 @@ Interrupt tests use `_run_interrupt_test` which:
 12. **Numeric config values are validated.** `_validate_num` rejects non-numeric
     SPEED, STABILITY, etc. and falls back to defaults. `USE_SPEAKER_BOOST` must
     be exactly `true` or `false`.
+
+13. **Use `xcrun swiftc`, not bare `swiftc`.** `xcrun` resolves the compiler
+    through Xcode's toolchain, ensuring the correct SDK is used even when the
+    CLT version doesn't match the macOS version.
+
+14. **Installer dialogs must not abort on failure.** Every `$(osascript ...)`
+    call in install.command must end with `|| true`. Without it, `set -e` silently
+    kills the installer when a user presses Escape or osascript fails. Error
+    messages interpolated into osascript strings must be sanitized with
+    `tr '"\\' "'/"` to prevent quote injection.
