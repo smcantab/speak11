@@ -129,20 +129,14 @@ def generate_audio(text, voice, speed, lang_code, cancel_check=None):
         if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
             raise RuntimeError("audio file empty after write")
 
-        # Release MLX metal buffers so memory doesn't accumulate
         del segments, audio
-        gc.collect()
-        mx.metal.clear_cache()
-
         return out_path
 
     except Exception:
-        # Clean up temp dir and metal buffers on failure
+        # Clean up temp dir on failure
         import shutil
 
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        gc.collect()
-        mx.metal.clear_cache()
         raise
 
 
@@ -215,6 +209,14 @@ def handle_client(conn):
             conn.close()
         except OSError:
             pass
+        # Release MLX metal buffers after response is sent (not between
+        # sentences) so back-to-back requests don't pay gc overhead.
+        import gc
+
+        import mlx.core as mx
+
+        gc.collect()
+        mx.metal.clear_cache()
 
 
 # ── Idle watchdog ────────────────────────────────────────────────────

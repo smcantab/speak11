@@ -166,7 +166,7 @@ respeaks from roughly the current position.
 1. speak.sh writes `TEXT_FILE` with the full original text.
 2. `play_audio` writes `STATUS_FILE` with four lines:
    ```
-   epoch_seconds
+   epoch_seconds      (fractional, via perl Time::HiRes)
    audio_duration
    char_offset        (sentence start in original text)
    sentence_length    (character count of current sentence)
@@ -253,12 +253,16 @@ this via `select()` on the client socket between generation segments and raises
 
 ### Memory management
 
-After each generation (success or failure):
-1. `del segments, audio` -- release numpy arrays
-2. `gc.collect()` -- collect Python garbage
-3. `mx.metal.clear_cache()` -- release MLX metal buffers
+After each complete client request (in `handle_client`'s `finally` block, after
+the response is sent):
+1. `gc.collect()` -- collect Python garbage
+2. `mx.metal.clear_cache()` -- release MLX metal buffers
 
-Without this, GPU memory accumulates across generations until the system swaps.
+This runs once per text, not once per sentence segment. Doing it between segments
+would add gc overhead to back-to-back sentence requests in the pipeline.
+
+Within `generate_audio`, only `del segments, audio` runs to release numpy arrays
+immediately. The heavier gc/cache-clear is deferred to idle time.
 
 
 ## Cleanup discipline
@@ -298,11 +302,18 @@ epoch timestamp age).
 | Mid-stream failure | Stop silently (already played something) |
 | Daemon unavailable | Fallback to direct `mlx_audio` invocation (cold start, slow) |
 
-### JSON encoding failure
+### JSON encoding
 
-If `python3 -c "import json..."` fails (python3 missing or crashes),
-`run_elevenlabs_tts` returns 1 with `HTTP_CODE` unset. The error handler's
-`[ -z "$HTTP_CODE" ]` catches this and routes to the network failure path.
+`json_encode()` is a pure-bash function (no fork). It escapes `\`, `"`, newline,
+carriage return, and tab. This replaces the old `python3 -c "import json..."` call
+that forked Python once per sentence (30-80ms x N sentences = 300-800ms overhead).
+
+### Daemon communication
+
+`tts_daemon_request()` uses `nc -U` (macOS built-in netcat with Unix socket support)
+instead of a Python subprocess. JSON request is built with `json_encode`, response
+is parsed with bash string operations (`${resp#*pattern}`, `${resp%%pattern}`).
+This eliminates one Python fork per daemon request (~50ms each).
 
 
 ## Config fields
@@ -391,6 +402,41 @@ Interrupt tests use `_run_interrupt_test` which:
 - Swift structure (methods exist, wiring correct)
 - File lifecycle (temp files cleaned, STATUS_FILE persists)
 - Daemon robustness (flock, socket cleanup, cancellation, memory management)
+
+
+## Performance
+
+### Critical rule: no O(n^2) bash substitutions
+
+**Never** use `${VAR//[[:space:]]/}` or any `${VAR//[char-class]/replacement}`
+in bash 3.2 (macOS default). These are O(n^2) for character class patterns.
+A 6KB text takes ~12 seconds per call.
+
+Use `[[ "$VAR" =~ [^[:space:]] ]]` instead (builtin, no fork, short-circuits
+on first match, O(n) worst case).
+
+### Minimize forks in hot paths
+
+speak.sh runs on every hotkey press. Each `fork+exec` costs 5-50ms. Rules:
+
+1. **json_encode is pure bash.** No python3 fork per sentence.
+2. **tts_daemon_request uses nc -U.** No python3 fork per daemon request.
+3. **wav_duration uses stat+bc.** No afinfo fork for local WAV files.
+   Falls back to afinfo for non-WAV (ElevenLabs MP3/OGG).
+4. **Fractional epoch uses perl.** `date +%s` on macOS is integer-only.
+   `/usr/bin/perl -MTime::HiRes=time` gives millisecond precision.
+
+### Profiling
+
+`tests/profile.sh` measures each phase of speak.sh. Run it to identify
+regressions or new optimization opportunities:
+
+```bash
+bash tests/profile.sh                  # uses default 2KB test text
+bash tests/profile.sh "custom text"    # profile specific text
+```
+
+Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
 
 
 ## Rules for changes

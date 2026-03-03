@@ -517,8 +517,8 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         let elapsed = Date().timeIntervalSince1970 - startTime
         let ratio = min(max(elapsed / duration, 0), 1)
 
-        // For short texts or near the end, restart from beginning
-        if text.count < 100 || ratio > 0.95 { return text }
+        // For short texts, restart from beginning
+        if text.count < 100 { return text }
 
         // Use per-sentence offset from 4-line STATUS_FILE when available
         let approxCharPos: Int
@@ -530,6 +530,9 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         } else {
             approxCharPos = Int(Double(text.count) * ratio)
         }
+
+        // Near the end of the full text — restart from beginning
+        if approxCharPos >= text.count - 50 { return text }
 
         // Find the nearest sentence boundary at or after approxCharPos
         let searchStart = max(0, approxCharPos - 20)

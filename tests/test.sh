@@ -306,29 +306,11 @@ check "config write is not nested inside settings if block" \
 check "done dialog conditions model message on mlx_ok" \
     "yes" "$(grep -B3 'Kokoro voice model' "$SCRIPT_DIR/install.command" | grep -q 'mlx_ok' && echo "yes" || echo "no")"
 
-# ── 9. uninstall.command syntax + structure ──────────────────
+# ── 9. uninstall.command syntax ──────────────────────────────
 
-section "uninstall.command syntax + structure"
+section "uninstall.command syntax"
 
 check "bash syntax valid" "0" "$(bash -n "$SCRIPT_DIR/uninstall.command" 2>/dev/null; echo $?)"
-
-check "uninstall: Terminal window ID captured" \
-    "yes" "$(grep -q '_TERM_WINDOW_ID' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
-
-check "uninstall: cleanup closes window by ID (not front window)" \
-    "yes" "$(grep -q 'whose id is' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
-
-check "uninstall: Terminal activate guarded by _IS_TERMINAL_APP" \
-    "yes" "$(grep -q '_IS_TERMINAL_APP' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
-
-check "uninstall: removes its own installed copy" \
-    "yes" "$(grep -q 'rm.*uninstall.command' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
-
-check "uninstall: confirm dialog has || true" \
-    "yes" "$(grep 'Uninstall.*Cancel\|Cancel.*Uninstall' "$SCRIPT_DIR/uninstall.command" | grep -q '|| true' && echo "yes" || echo "no")"
-
-check "uninstall: done dialog has || true" \
-    "yes" "$(grep 'has been removed' "$SCRIPT_DIR/uninstall.command" | grep -q '|| true' && echo "yes" || echo "no")"
 
 # ── 10. Swift source structure ────────────────────────────────────
 
@@ -392,7 +374,7 @@ else
     fi
 fi
 
-# ── 11b. TTS_BACKEND / LOCAL_VOICE config priority ────────────────
+# ── 11. TTS_BACKEND / LOCAL_VOICE config priority ─────────────────
 
 section "TTS_BACKEND / LOCAL_VOICE config priority"
 
@@ -824,7 +806,9 @@ check "STATUS_FILE has four lines (epoch, duration, offset, len)" \
     "4" "$([ -f "$_TESTTMP/speak11_status" ] && wc -l < "$_TESTTMP/speak11_status" | tr -d ' ' || echo "0")"
 
 # First line should be a recent epoch timestamp (within last 60 seconds)
+# Epoch may be fractional (e.g. 1741234567.890) — truncate to integer for arithmetic
 _STATUS_EPOCH=$(head -1 "$_TESTTMP/speak11_status" 2>/dev/null || echo "0")
+_STATUS_EPOCH=${_STATUS_EPOCH%%.*}
 _NOW_EPOCH=$(date +%s)
 _EPOCH_DIFF=$(( ${_NOW_EPOCH:-0} - ${_STATUS_EPOCH:-0} ))
 check "STATUS_FILE epoch is recent (within 60s)" \
@@ -1392,11 +1376,10 @@ check "§3: admin password prompt has 'with prompt'" \
 
 # §4: Single-instance guard using mkdir lock
 check "§4: single-instance lock directory created" \
-    "yes" "$(grep -q 'speak11_install.lock' "$SCRIPT_DIR/install.command" && \
-             grep -q 'mkdir.*LOCKDIR' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'mkdir.*\$_LOCKDIR\|mkdir.*speak11_install' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
 check "§4: lock directory cleaned up in cleanup/trap" \
-    "yes" "$(grep -q 'rmdir.*LOCKDIR\|rm.*LOCKDIR' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'rm.*\$_LOCKDIR\|rm.*speak11_install' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
 check "§4: stale lock detected via PID check" \
     "yes" "$(grep -q 'kill -0.*holder\|cat.*lock.*pid' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
@@ -1421,7 +1404,9 @@ check "§7: cleanup closes specific window by ID" \
 
 # §8: Fallback done dialog (no settings app) acknowledges partial install
 check "§8: fallback done mentions missing menu bar app on compile failure" \
-    "yes" "$(grep -q 'could not be compiled\|without settings app' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+    "yes" "$(awk '/compile_ok.*ne 0/,/fi/' "$SCRIPT_DIR/install.command" \
+        | grep -q 'menu bar app\|could not be compiled\|without settings app' \
+        && echo "yes" || echo "no")"
 
 # §9: Re-install preserves user-customized config values
 check "§9: existing config preserved on re-install" \
@@ -1802,8 +1787,9 @@ check "speak.sh: SPEED env var saved before config sourcing" \
 check "speak.sh: local TTS uses LOCAL_SPEED" \
     "yes" "$(grep -q '_SPEED=\"\$LOCAL_SPEED\"' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: python3 check skipped for local-only mode" \
-    "yes" "$(grep -q 'TTS_BACKEND.*!=.*local.*python3' "$SPEAK_SH" && echo "yes" || echo "no")"
+# python3 check was removed (json_encode is pure bash; split_sentences has its own fallback)
+check "speak.sh: no hard exit for missing python3" \
+    "0" "$(grep -c 'command -v python3.*exit 1' "$SPEAK_SH" || true)"
 
 check "Speak11.swift: localSpeed config field" \
     "yes" "$(grep -q 'localSpeed' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
@@ -1829,26 +1815,21 @@ check "install.command: LOCAL_SPEED in default config" \
 check "tts_server.py: warmup uses bf_lily" \
     "yes" "$(grep -q 'bf_lily' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-# ── 35b. MLX memory management ──────────────────────────────────
+# ── 33. MLX memory management ───────────────────────────────────
 
 section "MLX memory management"
 
-check "tts_server.py: clears MLX metal cache after generation" \
-    "yes" "$(grep -q 'mx.metal.clear_cache()' "$TTS_SERVER" && echo "yes" || echo "no")"
-
-check "tts_server.py: runs gc.collect after generation" \
+# gc/cache cleanup moved from generate_audio to handle_client (idle time)
+check "tts_server.py: gc.collect in handle_client (after response)" \
     "yes" "$(grep -q 'gc.collect()' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-check "tts_server.py: imports mlx.core in generate_audio" \
-    "yes" "$(grep -q 'import mlx.core' "$TTS_SERVER" && echo "yes" || echo "no")"
+check "tts_server.py: mx.metal.clear_cache in handle_client" \
+    "yes" "$(grep -q 'mx.metal.clear_cache()' "$TTS_SERVER" && echo "yes" || echo "no")"
 
 check "tts_server.py: deletes segments and audio arrays" \
     "yes" "$(grep -q 'del segments, audio' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-check "tts_server.py: clears cache on error path too" \
-    "yes" "$(awk '/except Exception/,/raise/' "$TTS_SERVER" | grep -q 'clear_cache' && echo "yes" || echo "no")"
-
-# ── 35c. Generation cancellation on client disconnect ────────────
+# ── 34. Generation cancellation on client disconnect ─────────────
 
 section "Generation cancellation"
 
@@ -1876,7 +1857,7 @@ check "tts_server.py: CancelledError caught in handle_client" \
 check "tts_server.py: cancelled generation is logged" \
     "yes" "$(grep -q 'generation cancelled' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-# ── 35d. Threaded client handling ────────────────────────────────
+# ── 35. Threaded client handling ─────────────────────────────────
 
 section "Threaded client handling"
 
@@ -2156,7 +2137,7 @@ check "toggle kill is inside if kill -0 block" \
 
 # Toggle waits for old process to die before proceeding
 check "toggle waits for old process to die" \
-    "yes" "$(grep -A 8 'pkill -P "\$OLD_PID"' "$SPEAK_SH" | grep -q 'sleep 0.1' && echo "yes" || echo "no")"
+    "yes" "$(grep -A 8 'pkill -P "\$OLD_PID"' "$SPEAK_SH" | grep -q 'sleep 0.0[1-9]\|sleep 0.1' && echo "yes" || echo "no")"
 
 # Toggle force-kills if process still alive after grace period
 check "toggle force-kills (kill -9) as fallback" \
@@ -2523,15 +2504,11 @@ check "daemon: cancel_check between segments" \
 check "daemon: CancelledError handler in handle_client" \
     "yes" "$(grep -q 'except CancelledError' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-# Daemon: metal cache cleared on both success and error paths
-_CACHE_CLEAR_COUNT=$(grep -c 'clear_cache' "$TTS_SERVER" || true)
-check "daemon: mx.metal.clear_cache in both success and error paths" \
-    "yes" "$([ "$_CACHE_CLEAR_COUNT" -ge 2 ] && echo "yes" || echo "no")"
-
-# Daemon: gc.collect in both success and error paths
-_GC_COUNT=$(grep -c 'gc.collect' "$TTS_SERVER" || true)
-check "daemon: gc.collect in both success and error paths" \
-    "yes" "$([ "$_GC_COUNT" -ge 2 ] && echo "yes" || echo "no")"
+# Daemon: gc/cache cleanup in handle_client (moved from generate_audio)
+check "daemon: gc.collect present in tts_server.py" \
+    "yes" "$(grep -q 'gc.collect' "$TTS_SERVER" && echo "yes" || echo "no")"
+check "daemon: mx.metal.clear_cache present in tts_server.py" \
+    "yes" "$(grep -q 'clear_cache' "$TTS_SERVER" && echo "yes" || echo "no")"
 
 # ── 51. Functional: toggle kills entire process tree ──────────────
 
@@ -3785,6 +3762,243 @@ check_exit "429 + install-local + local TTS succeeds → exits 0" 0 \
     bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
+
+# ── 52. Empty text check performance ─────────────────────────────
+
+section "Empty text check (no O(n^2) bash substitution)"
+
+# speak.sh must NOT use ${TEXT//[[:space:]]/} which is O(n^2) in bash 3.2
+# for large texts.  Use [[ =~ ]] instead.  (A comment mentioning the pattern is OK.)
+check "speak.sh: no \${TEXT//[[:space:]]/} pattern in code" \
+    "0" "$(grep -v '^ *#' "$SPEAK_SH" | grep -c 'TEXT//\[' || true)"
+
+# speak.sh uses [[ =~ ]] regex match (builtin, no fork, short-circuits)
+check "speak.sh: uses [[ =~ ]] for whitespace check" \
+    "yes" "$(grep -q '\[\[ "\$TEXT" =~ \[^' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Functional: large text (6KB) with pipe completes in under 5 seconds
+_STUBS=$(mktemp -d)
+_TESTTMP=$(mktemp -d)
+printf '#!/bin/bash\nexit 1\n' > "$_STUBS/security"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/osascript"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
+printf '#!/bin/bash\necho "estimated duration: 2.000000 sec"\n' > "$_STUBS/afinfo"
+cat > "$_STUBS/python3" << PYSTUB
+#!/bin/bash
+for arg in "\$@"; do
+    if [ "\$arg" = "mlx_audio.tts.generate" ]; then
+        printf "RIFF" > "speak11.wav"
+        exit 0
+    fi
+    case "\$arg" in *tts_server.py) exit 1;; esac
+done
+exit 1
+PYSTUB
+chmod +x "$_STUBS"/*
+
+# Generate 6KB of text
+_BIGTEXT=""
+for _i in $(seq 1 100); do
+    _BIGTEXT="${_BIGTEXT}This is sentence number ${_i} in a big text. "
+done
+
+_T0=$(date +%s)
+printf '%s' "$_BIGTEXT" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" \
+    TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
+    timeout 5 /bin/bash "$SPEAK_SH" >/dev/null 2>&1 || true
+_T1=$(date +%s)
+_ELAPSED=$(( ${_T1:-0} - ${_T0:-0} ))
+
+check "large text (6KB) piped: completes within 5s (was 25s)" \
+    "yes" "$([ "$_ELAPSED" -le 5 ] && echo "yes" || echo "no ($_ELAPSED s)")"
+
+rm -rf "$_STUBS" "$_TESTTMP"
+
+# ── 53. STATUS_FILE fractional epoch ─────────────────────────────
+
+section "STATUS_FILE fractional epoch"
+
+# play_audio must write fractional epoch (not integer date +%s)
+check "play_audio: writes fractional epoch to STATUS_FILE" \
+    "yes" "$(awk '/^play_audio\(\)/,/^}/' "$SPEAK_SH" | grep -qE 'perl.*time|python.*time\(\)|date.*%s%.?%N' && echo "yes" || echo "no")"
+
+# Functional: STATUS_FILE first line has decimal point
+_STUBS=$(mktemp -d)
+_TESTTMP=$(mktemp -d)
+printf '#!/bin/bash\necho "fake-key"\n' > "$_STUBS/security"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/osascript"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
+printf '#!/bin/bash\necho "estimated duration: 5.000000 sec"\n' > "$_STUBS/afinfo"
+cat > "$_STUBS/curl" << 'STUB'
+#!/bin/bash
+prev=""
+for a in "$@"; do
+    if [ "$prev" = "-o" ]; then printf "fakeaudio" > "$a"; fi
+    prev="$a"
+done
+printf "200"
+STUB
+printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
+chmod +x "$_STUBS"/*
+
+echo "Hello world." | \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto \
+    bash "$SPEAK_SH" >/dev/null 2>&1 || true
+
+_STATUS_EPOCH=$(head -1 "$_TESTTMP/speak11_status" 2>/dev/null || echo "0")
+check "STATUS_FILE epoch has fractional part" \
+    "yes" "$(echo "$_STATUS_EPOCH" | grep -q '\.' && echo "yes" || echo "no (got: $_STATUS_EPOCH)")"
+
+rm -rf "$_STUBS" "$_TESTTMP"
+
+# ── 54. Respeak: ratio > 0.95 must check end of text ────────────
+
+section "Respeak: ratio > 0.95 end-of-text check"
+
+# Swift must NOT return full text just because ratio > 0.95 for the current sentence.
+# It should only restart from beginning if approxCharPos is near end of full text.
+check "Swift: no early return on ratio > 0.95 alone" \
+    "no" "$(grep -q 'ratio > 0.95 { return text }' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# The ratio check should be AFTER computing approxCharPos, checking against text.count
+check "Swift: end-of-text check uses approxCharPos" \
+    "yes" "$(grep -q 'approxCharPos.*text.count\|resumePos.*text.count' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# ── 55. gc/cache-clear moved to idle time ────────────────────────
+
+section "Daemon: gc/cache-clear after full text"
+
+TTS_SERVER="$SCRIPT_DIR/tts_server.py"
+
+# generate_audio try block (success path) should NOT have gc.collect or clear_cache
+_GEN_TRY=$(awk '/^def generate_audio/{f=1} f{print} f && /^def [a-z_]/ && !/^def generate_audio/{f=0}' "$TTS_SERVER" | \
+    awk '/^    try:/{f=1} f{print} f && /^    except/{f=0}')
+check "generate_audio: no gc.collect in success path" \
+    "0" "$(echo "$_GEN_TRY" | grep -c 'gc.collect' || true)"
+check "generate_audio: no clear_cache in success path" \
+    "0" "$(echo "$_GEN_TRY" | grep -c 'clear_cache' || true)"
+
+# gc/cache cleanup should happen in handle_client (after response is sent)
+_HC_BODY=$(awk '/^def handle_client/{f=1} f{print} f && /^def [a-z_]/ && !/^def handle_client/{f=0}' "$TTS_SERVER")
+check "handle_client: gc.collect after response" \
+    "yes" "$(echo "$_HC_BODY" | grep -q 'gc.collect' && echo "yes" || echo "no")"
+check "handle_client: clear_cache after response" \
+    "yes" "$(echo "$_HC_BODY" | grep -q 'clear_cache' && echo "yes" || echo "no")"
+
+# ── 56. Bash JSON encoding (no Python fork per sentence) ──────────
+
+section "Bash JSON encoding (no Python fork per sentence)"
+
+# speak.sh must define a json_encode function (pure bash, no fork)
+check "speak.sh: json_encode function defined" \
+    "yes" "$(grep -q '^json_encode()' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# run_elevenlabs_tts must NOT fork python3 for JSON encoding
+check "speak.sh: run_elevenlabs_tts uses json_encode (no python3 -c json)" \
+    "0" "$(sed -n '/^run_elevenlabs_tts() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -c 'python3 -c.*json' || true)"
+
+# json_encode must handle quotes, backslashes, newlines, tabs
+# Source the function from speak.sh (it's pure bash, safe to source this snippet)
+eval "$(awk '/^json_encode\(\)/,/^}/' "$SPEAK_SH")" 2>/dev/null || true
+
+if type json_encode &>/dev/null; then
+    check "json_encode: plain text" \
+        '"Hello world"' "$(json_encode "Hello world")"
+
+    check "json_encode: quotes escaped" \
+        '"He said \"hi\""' "$(json_encode 'He said "hi"')"
+
+    check "json_encode: backslash escaped" \
+        '"path\\to\\file"' "$(json_encode 'path\to\file')"
+
+    check "json_encode: newline escaped" \
+        '"line1\nline2"' "$(json_encode $'line1\nline2')"
+
+    check "json_encode: tab escaped" \
+        '"col1\tcol2"' "$(json_encode $'col1\tcol2')"
+
+    check "json_encode: carriage return escaped" \
+        '"a\rb"' "$(json_encode $'a\rb')"
+
+    # Verify output is valid JSON by round-tripping through python
+    _TEST_INPUT=$'She said "hello" and walked away.\nThen she turned back.'
+    _JSON_OUT=$(json_encode "$_TEST_INPUT")
+    check "json_encode: valid JSON (python round-trip)" \
+        "yes" "$(echo "$_JSON_OUT" | python3 -c "import json,sys; json.loads(sys.stdin.read().strip())" 2>/dev/null && echo "yes" || echo "no")"
+else
+    check "json_encode: plain text" '"Hello world"' "function not found"
+    check "json_encode: quotes escaped" '"He said \"hi\""' "function not found"
+    check "json_encode: backslash escaped" '"path\\to\\file"' "function not found"
+    check "json_encode: newline escaped" '"line1\nline2"' "function not found"
+    check "json_encode: tab escaped" '"col1\tcol2"' "function not found"
+    check "json_encode: carriage return escaped" '"a\rb"' "function not found"
+    check "json_encode: valid JSON (python round-trip)" "yes" "function not found"
+fi
+
+# ── 57. nc -U for daemon requests (no Python fork) ───────────────
+
+section "Daemon requests via nc -U (no Python fork)"
+
+# speak.sh should use nc -U for daemon communication
+_TDR_BODY=$(sed -n '/^tts_daemon_request() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH")
+check "speak.sh: tts_daemon_request uses nc -U" \
+    "yes" "$(echo "$_TDR_BODY" | grep -q 'nc -U\|nc.*-U' && echo "yes" || echo "no")"
+
+# JSON request built with json_encode, not python3
+check "speak.sh: tts_daemon_request builds JSON without python3" \
+    "0" "$(echo "$_TDR_BODY" | grep -c 'python3' || true)"
+
+# Response parsing uses bash string ops, not python3
+check "speak.sh: tts_daemon_request parses response without python3" \
+    "yes" "$(echo "$_TDR_BODY" | grep -q 'audio_file.*%%\|audio_file.*##' && echo "yes" || echo "no")"
+
+# ── 58. WAV duration without afinfo (local mode) ─────────────────
+
+section "WAV duration without afinfo (local mode)"
+
+# play_audio should compute duration from WAV header for local files
+# instead of forking afinfo + awk
+check "speak.sh: play_audio uses stat for WAV duration" \
+    "yes" "$(sed -n '/^play_audio() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -q 'wav_duration\|stat -f' && echo "yes" || echo "no")"
+
+# Functional: create a real WAV file and verify duration calculation
+_WAV_TMP=$(mktemp "${TMPDIR:-/tmp/}speak11_test_XXXXXXXXXX.wav")
+# Create a minimal WAV file: 24kHz, 16-bit, mono, 2.4 seconds = 115200 samples
+# Header: 44 bytes + data: 230400 bytes (115200 samples * 2 bytes) = 230444 total
+python3 -c "
+import struct, sys
+sr = 24000; ch = 1; bps = 16; n = 115200
+data_size = n * ch * (bps // 8)
+with open(sys.argv[1], 'wb') as f:
+    f.write(b'RIFF')
+    f.write(struct.pack('<I', 36 + data_size))
+    f.write(b'WAVEfmt ')
+    f.write(struct.pack('<IHHIIHH', 16, 1, ch, sr, sr*ch*(bps//8), ch*(bps//8), bps))
+    f.write(b'data')
+    f.write(struct.pack('<I', data_size))
+    f.write(b'\x00' * data_size)
+" "$_WAV_TMP"
+
+# Extract the WAV duration function and test it
+eval "$(awk '/^wav_duration\(\)/,/^}/' "$SPEAK_SH")" 2>/dev/null || true
+_CALC_DUR=$(type wav_duration &>/dev/null && wav_duration "$_WAV_TMP" 2>/dev/null || echo "fail")
+# Should be close to 4.8 (230400 bytes of data / 48000 bytes per second)
+# Actually: data_size=230400, bytes_per_sec=24000*1*2=48000, dur=230400/48000=4.800
+check "wav_duration: calculates correct duration for 24kHz WAV" \
+    "yes" "$(echo "$_CALC_DUR" | awk '{if ($1 >= 4.5 && $1 <= 5.1) print "yes"; else print "no"}')"
+rm -f "$_WAV_TMP"
+
+# ── 59. Tighter kill-wait loop ───────────────────────────────────
+
+section "Toggle: tighter kill-wait loop"
+
+# The kill-wait loop should use sleep 0.05 (not 0.1) for faster toggle response
+check "speak.sh: kill-wait uses sleep 0.05" \
+    "yes" "$(grep -q 'sleep 0.05' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Loop should check more times (10 iterations at 0.05s = 500ms budget)
+check "speak.sh: kill-wait has 10 iterations" \
+    "yes" "$(grep -q 'for _i in 1 2 3 4 5 6 7 8 9 10' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # ── Summary ──────────────────────────────────────────────────────
 

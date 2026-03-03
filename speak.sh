@@ -74,10 +74,10 @@ if [ -f "$PID_FILE" ]; then
         # Kill children first (curl, python, afplay) so bash can handle SIGTERM
         pkill -P "$OLD_PID" 2>/dev/null
         kill "$OLD_PID" 2>/dev/null
-        # Wait for process to die (up to 0.5s)
-        for _i in 1 2 3 4 5; do
+        # Wait for process to die (up to 0.5s, checking every 50ms)
+        for _i in 1 2 3 4 5 6 7 8 9 10; do
             kill -0 "$OLD_PID" 2>/dev/null || break
-            sleep 0.1
+            sleep 0.05
         done
         # Force-kill if still alive (e.g. stuck in subprocess)
         kill -0 "$OLD_PID" 2>/dev/null && kill -9 "$OLD_PID" 2>/dev/null
@@ -94,12 +94,13 @@ if [ -t 0 ]; then
     TEXT=$(pbpaste 2>/dev/null)
 else
     TEXT=$(cat /dev/stdin)
-    if [ -z "${TEXT//[[:space:]]/}" ]; then
+    # Bash 3.2: ${TEXT//[[:space:]]/} is O(n^2) — use regex match instead
+    if ! [[ "$TEXT" =~ [^[:space:]] ]]; then
         TEXT=$(pbpaste 2>/dev/null)
     fi
 fi
 
-if [ -z "${TEXT//[[:space:]]/}" ]; then
+if ! [[ "$TEXT" =~ [^[:space:]] ]]; then
     exit 0
 fi
 
@@ -125,11 +126,9 @@ if [ "$TTS_BACKEND" = "elevenlabs" ]; then
     fi
 fi
 
-# python3 is needed for ElevenLabs JSON encoding (local mode uses VENV_PYTHON)
-if [ "$TTS_BACKEND" != "local" ] && ! command -v python3 &>/dev/null; then
-    osascript -e 'display dialog "python3 is required but not found." & return & return & "Install Xcode Command Line Tools: xcode-select --install" with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
-    exit 1
-fi
+# python3 is used for sentence splitting (local mode uses VENV_PYTHON);
+# split_sentences falls back to unsplit text if python3 is missing, so
+# this is not fatal — removed the hard exit.
 
 # ── Shared state ─────────────────────────────────────────────────
 TMP_FILE=""
@@ -249,36 +248,22 @@ start_tts_daemon() {
 
 # Send a TTS request to the daemon.  Prints audio file path on stdout.
 tts_daemon_request() {
-    local PY="$1"
-    printf '%s' "$TEXT" | "$PY" -c "
-import json, socket, sys, os
-text = sys.stdin.read()
-req = json.dumps({
-    'text': text,
-    'voice': os.environ.get('_VOICE', 'bf_lily'),
-    'speed': os.environ.get('_SPEED', '1.00'),
-    'lang_code': os.environ.get('_LANG', 'b'),
-})
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-sock.settimeout(120)
-sock.connect(os.environ['_SOCK'])
-sock.sendall((req + '\n').encode())
-data = b''
-while True:
-    chunk = sock.recv(4096)
-    if not chunk:
-        break
-    data += chunk
-    if b'\n' in data:
-        break
-sock.close()
-resp = json.loads(data.decode().strip())
-if resp.get('status') == 'ok':
-    print(resp['audio_file'])
-else:
-    print(resp.get('message', 'daemon error'), file=sys.stderr)
-    sys.exit(1)
-"
+    local text_json voice="${_VOICE:-bf_lily}" speed="${_SPEED:-1.00}" lang="${_LANG:-b}"
+    text_json=$(json_encode "$TEXT")
+    local req="{\"text\":${text_json},\"voice\":\"${voice}\",\"speed\":\"${speed}\",\"lang_code\":\"${lang}\"}"
+    local resp
+    resp=$(printf '%s\n' "$req" | nc -U "$_SOCK" 2>/dev/null) || return 1
+    # Parse audio_file from JSON response without forking python
+    local audio_file="${resp#*\"audio_file\":\"}"
+    audio_file="${audio_file%%\"*}"
+    if [ -n "$audio_file" ] && [ -f "$audio_file" ]; then
+        printf '%s' "$audio_file"
+    else
+        local msg="${resp#*\"message\":\"}"
+        msg="${msg%%\"*}"
+        printf '%s\n' "${msg:-daemon error}" >&2
+        return 1
+    fi
 }
 
 run_local_tts() {
@@ -297,7 +282,7 @@ run_local_tts() {
         _req_out=$(mktemp "${TMPDIR:-/tmp/}speak11_req_XXXXXXXXXX") || return 1
         _SOCK="$TTS_SOCK" _VOICE="${LOCAL_VOICE:-bf_lily}" \
             _SPEED="$LOCAL_SPEED" _LANG="${LOCAL_VOICE:0:1}" \
-            tts_daemon_request "$PY" > "$_req_out" 2>> "$LOG_FILE" &
+            tts_daemon_request > "$_req_out" 2>> "$LOG_FILE" &
         _DAEMON_PID=$!
         wait "$_DAEMON_PID" 2>/dev/null
         [ $? -eq 0 ] && audio_file=$(cat "$_req_out" 2>/dev/null)
@@ -351,8 +336,13 @@ run_local_tts() {
 # This overlap lets the next sentence generate while the current one plays.
 play_audio() {
     local duration
-    duration=$(afinfo "$TMP_FILE" 2>/dev/null | awk '/estimated duration/{print $3}')
-    printf '%s\n%s\n%s\n%s\n' "$(date +%s)" "${duration:-0}" "${1:-0}" "${2:-0}" > "$STATUS_FILE"
+    # Use wav_duration for local WAV files (no fork), afinfo for cloud audio
+    if [[ "$TMP_FILE" == *.wav ]]; then
+        duration=$(wav_duration "$TMP_FILE" 2>/dev/null)
+    fi
+    [ -z "$duration" ] && duration=$(afinfo "$TMP_FILE" 2>/dev/null | awk '/estimated duration/{print $3}')
+    # Fractional epoch for accurate respeak position (date +%s is integer-only on macOS)
+    printf '%s\n%s\n%s\n%s\n' "$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time')" "${duration:-0}" "${1:-0}" "${2:-0}" > "$STATUS_FILE"
     afplay "$TMP_FILE" &
     PLAY_PID=$!
 }
@@ -364,6 +354,25 @@ wait_audio() {
     fi
 }
 
+# ── JSON encoding (pure bash — no fork) ──────────────────────────
+json_encode() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '"%s"' "$s"
+}
+
+# ── WAV duration from file size (no afinfo fork) ─────────────────
+# Kokoro outputs 24kHz mono 16-bit WAV: bytes_per_sec = 48000.
+wav_duration() {
+    local bytes
+    bytes=$(stat -f%z "$1" 2>/dev/null) || return 1
+    echo "scale=6; ($bytes - 44) / 48000" | bc
+}
+
 # ── ElevenLabs single-sentence helper ─────────────────────────────
 # Sends one sentence to the ElevenLabs API. Sets TMP_FILE on success.
 # Returns 0 on success, 1 on failure. Sets HTTP_CODE and CURL_EXIT.
@@ -373,8 +382,8 @@ wait_audio() {
 # command substitution ($()) is running.
 run_elevenlabs_tts() {
     local sentence="$1"
-    JSON_TEXT=$(python3 -c "import json, sys; print(json.dumps(sys.stdin.read()))" <<< "$sentence")
-    if [ $? -ne 0 ] || [ -z "$JSON_TEXT" ]; then
+    JSON_TEXT=$(json_encode "$sentence")
+    if [ -z "$JSON_TEXT" ]; then
         return 1
     fi
 
