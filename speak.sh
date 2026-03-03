@@ -108,21 +108,24 @@ fi
 TEXT=$(printf '%s' "$TEXT" | iconv -f UTF-8 -t UTF-8//IGNORE)
 
 # ── Mute check ────────────────────────────────────────────────────
-# Fast path: speak11-audio queries CoreAudio directly (sub-ms).
-# Fallback: osascript (80-500ms) if the compiled tool isn't available.
-_AUDIO_TOOL="$SCRIPT_DIR/speak11-audio"
-[ -x "$_AUDIO_TOOL" ] || _AUDIO_TOOL="$HOME/.local/bin/speak11-audio"
-if [ -x "$_AUDIO_TOOL" ]; then
-    _is_muted() { "$_AUDIO_TOOL" is-muted; }
-    _unmute()   { "$_AUDIO_TOOL" unmute 2>/dev/null; }
-else
-    _is_muted() { osascript -e 'output muted of (get volume settings)' 2>/dev/null | grep -q 'true'; }
-    _unmute()   { osascript -e 'set volume without output muted' 2>/dev/null; }
-fi
-if _is_muted; then
-    mute_result=$(osascript -e 'button returned of (display dialog "Your Mac is muted." with title "Speak11" buttons {"Cancel", "Unmute & Play"} default button "Unmute & Play" with icon caution)' 2>/dev/null) || exit 0
-    if [ "$mute_result" = "Unmute & Play" ]; then
-        _unmute
+# When launched from Speak11.app, the mute check is done in-process via
+# CoreAudio (microseconds). SPEAK11_MUTE_CHECKED=1 signals this.
+# Standalone: speak11-audio CLI (35ms) or osascript fallback (80-500ms).
+if [ "${SPEAK11_MUTE_CHECKED:-}" != "1" ]; then
+    _AUDIO_TOOL="$SCRIPT_DIR/speak11-audio"
+    [ -x "$_AUDIO_TOOL" ] || _AUDIO_TOOL="$HOME/.local/bin/speak11-audio"
+    if [ -x "$_AUDIO_TOOL" ]; then
+        _is_muted() { "$_AUDIO_TOOL" is-muted; }
+        _unmute()   { "$_AUDIO_TOOL" unmute 2>/dev/null; }
+    else
+        _is_muted() { osascript -e 'output muted of (get volume settings)' 2>/dev/null | grep -q 'true'; }
+        _unmute()   { osascript -e 'set volume without output muted' 2>/dev/null; }
+    fi
+    if _is_muted; then
+        mute_result=$(osascript -e 'button returned of (display dialog "Your Mac is muted." with title "Speak11" buttons {"Cancel", "Unmute & Play"} default button "Unmute & Play" with icon caution)' 2>/dev/null) || exit 0
+        if [ "$mute_result" = "Unmute & Play" ]; then
+            _unmute
+        fi
     fi
 fi
 

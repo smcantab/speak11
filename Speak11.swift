@@ -1,5 +1,6 @@
 import Cocoa
 import ApplicationServices
+import CoreAudio
 
 // MARK: - Config paths
 
@@ -144,6 +145,50 @@ private let styleSteps: [(label: String, value: Double)] = [
     ("0.0 — none (default)", 0.0), ("0.25", 0.25), ("0.5", 0.5),
     ("0.75", 0.75), ("1.0 — max", 1.0),
 ]
+
+// MARK: - CoreAudio mute check (in-process, microseconds)
+
+private func getDefaultOutputDevice() -> AudioDeviceID? {
+    var deviceID: AudioDeviceID = kAudioObjectUnknown
+    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    guard AudioObjectHasProperty(AudioObjectID(kAudioObjectSystemObject), &address) else { return nil }
+    let err = AudioObjectGetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
+    )
+    return (err == noErr && deviceID != kAudioObjectUnknown) ? deviceID : nil
+}
+
+func isOutputMuted() -> Bool {
+    guard let deviceID = getDefaultOutputDevice() else { return false }
+    var muted: UInt32 = 0
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyMute,
+        mScope: kAudioDevicePropertyScopeOutput,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    guard AudioObjectHasProperty(deviceID, &address) else { return false }
+    let err = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &muted)
+    return err == noErr && muted == 1
+}
+
+func unmuteOutput() {
+    guard let deviceID = getDefaultOutputDevice() else { return }
+    var muted: UInt32 = 0
+    let size = UInt32(MemoryLayout<UInt32>.size)
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyMute,
+        mScope: kAudioDevicePropertyScopeOutput,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    guard AudioObjectHasProperty(deviceID, &address) else { return }
+    AudioObjectSetPropertyData(deviceID, &address, 0, nil, size, &muted)
+}
 
 // MARK: - Global hotkey ⌥⇧/ → speak.sh
 //
@@ -348,6 +393,20 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     // MARK: - Speak process management
 
     func runSpeak(withText text: String? = nil) {
+        // In-process mute check via CoreAudio (microseconds, no fork).
+        if isOutputMuted() {
+            let alert = NSAlert()
+            alert.messageText = "Your Mac is muted."
+            alert.addButton(withTitle: "Unmute & Play")
+            alert.addButton(withTitle: "Cancel")
+            alert.alertStyle = .warning
+            if alert.runModal() == .alertFirstButtonReturn {
+                unmuteOutput()
+            } else {
+                return
+            }
+        }
+
         speakLock.lock()
         speakGeneration += 1
         let gen = speakGeneration
@@ -360,6 +419,8 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/bin/bash")
             task.arguments    = [speakPath]
+            task.environment  = ProcessInfo.processInfo.environment.merging(
+                ["SPEAK11_MUTE_CHECKED": "1"]) { _, new in new }
 
             if let text = text {
                 let pipe = Pipe()

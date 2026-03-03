@@ -4184,6 +4184,25 @@ check "speak.sh: osascript mute fallback for missing binary" \
 check "install.command: compiles speak11-audio.swift" \
     "yes" "$(grep -q 'speak11-audio.swift' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
+# In-process mute check in Speak11.swift (no fork when launched from app)
+check "Speak11.swift: imports CoreAudio" \
+    "yes" "$(grep -q 'import CoreAudio' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "Speak11.swift: has isOutputMuted function" \
+    "yes" "$(grep -q 'func isOutputMuted' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "Speak11.swift: has unmuteOutput function" \
+    "yes" "$(grep -q 'func unmuteOutput' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "Speak11.swift: checks mute in runSpeak" \
+    "yes" "$(grep -q 'isOutputMuted' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "Speak11.swift: passes SPEAK11_MUTE_CHECKED to speak.sh" \
+    "yes" "$(grep -q 'SPEAK11_MUTE_CHECKED' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "speak.sh: skips mute check when SPEAK11_MUTE_CHECKED=1" \
+    "yes" "$(grep -q 'SPEAK11_MUTE_CHECKED' "$SPEAK_SH" && echo "yes" || echo "no")"
+
 # ── Summary ──────────────────────────────────────────────────────
 
 printf "\n────────────────────────────────────────────\n"
