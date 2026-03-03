@@ -60,7 +60,7 @@ unspin() {
 $_IS_TERMINAL_APP && osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
 
 # ── Welcome ───────────────────────────────────────────────────────
-result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Copy the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS for free offline use (Apple Silicon)" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null)
+result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Copy the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS for free offline use (Apple Silicon)" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null || true)
 [ "$result" = "Quit" ] && exit 0
 
 # ── Architecture detection ───────────────────────────────────────
@@ -70,7 +70,8 @@ IS_ARM64=false
 # ── Backend choice ───────────────────────────────────────────────
 BACKEND_CHOICE="ElevenLabs Only"
 if $IS_ARM64; then
-    BACKEND_CHOICE=$(osascript -e 'button returned of (display dialog "Choose your TTS backend:" & return & return & "• ElevenLabs Only — cloud API" & return & "• Both — ElevenLabs + local fallback" & return & "• Local Only — free, runs on your Mac" with title "Speak11" buttons {"ElevenLabs Only", "Both", "Local Only"} default button "Both" with icon note)' 2>/dev/null)
+    BACKEND_CHOICE=$(osascript -e 'button returned of (display dialog "Choose your TTS backend:" & return & return & "• ElevenLabs Only — cloud API" & return & "• Both — ElevenLabs + local fallback" & return & "• Local Only — free, runs on your Mac" with title "Speak11" buttons {"ElevenLabs Only", "Both", "Local Only"} default button "Both" with icon note)' 2>/dev/null || true)
+    [ -z "$BACKEND_CHOICE" ] && BACKEND_CHOICE="ElevenLabs Only"
 fi
 
 # ── API Key ──────────────────────────────────────────────────────
@@ -81,15 +82,15 @@ elif [ "$BACKEND_CHOICE" = "Both" ]; then
     API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:\n\nThe key needs Text-to-Speech and User Read permissions.\n\nSkip to use local TTS only when ElevenLabs is unavailable." with title "Speak11" default answer "" with hidden answer buttons {"Skip", "Install"} default button "Install")' 2>/dev/null || true)
 else
     # ElevenLabs Only (or Intel — same thing)
-    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:\n\nThe key needs Text-to-Speech and User Read permissions." with title "Speak11" default answer "" with hidden answer buttons {"Cancel", "Install"} default button "Install")' 2>/dev/null)
+    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:\n\nThe key needs Text-to-Speech and User Read permissions." with title "Speak11" default answer "" with hidden answer buttons {"Cancel", "Install"} default button "Install")' 2>/dev/null || true)
     if [ -z "$API_KEY" ]; then
-        osascript -e 'display dialog "No API key entered. Installation cancelled." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+        osascript -e 'display dialog "No API key entered. Installation cancelled." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null || true
         exit 1
     fi
 fi
 
 # ── Settings app choice (ask before work begins) ─────────────────
-settings_result=$(osascript -e 'button returned of (display dialog "Install the Speak11 app?\n\nAdds a waveform icon to your menu bar to change voice, model, and speed without editing any files." with title "Speak11" buttons {"Skip", "Install"} default button "Install" with icon note)' 2>/dev/null)
+settings_result=$(osascript -e 'button returned of (display dialog "Install the Speak11 app?\n\nAdds a waveform icon to your menu bar to change voice, model, and speed without editing any files." with title "Speak11" buttons {"Skip", "Install"} default button "Install" with icon note)' 2>/dev/null || true)
 
 # ── Show terminal with progress ──────────────────────────────────
 osascript -e 'tell application "Terminal"
@@ -101,19 +102,58 @@ header
 
 # ── Store key in Keychain ─────────────────────────────────────────
 if [ -n "$API_KEY" ]; then
-    security add-generic-password \
+    if security add-generic-password \
         -a "speak11" \
         -s "speak11-api-key" \
         -w "$API_KEY" \
-        -U 2>/dev/null
-    step "API key stored in Keychain"
+        -U 2>/dev/null; then
+        step "API key stored in Keychain"
+    else
+        printf '  \033[33m⚠\033[0m  Could not store API key in Keychain (will prompt on use)\n'
+    fi
+fi
+
+# ── Log file ─────────────────────────────────────────────────────
+_LOG_DIR="$HOME/.local/share/speak11"
+_LOG_FILE="$_LOG_DIR/install.log"
+mkdir -p "$_LOG_DIR"
+: > "$_LOG_FILE"
+
+# ── Ensure Xcode Command Line Tools match macOS version ──────────
+_os_major=$(sw_vers -productVersion | cut -d. -f1)
+_clt_major=$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables 2>/dev/null \
+    | awk '/version:/{print $2}' | cut -d. -f1)
+
+if [ -z "$_clt_major" ] || [ "$_clt_major" != "$_os_major" ]; then
+    spin "Checking for Command Line Tools update…"
+    touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress 2>/dev/null || true
+    _clt_label=$(softwareupdate --list 2>&1 \
+        | grep -o 'Label: Command Line Tools[^,]*' | sed 's/Label: //' | head -1)
+    unspin
+
+    if [ -n "$_clt_label" ]; then
+        spin "Installing $_clt_label (this may take a few minutes)…"
+        set +e
+        osascript -e "do shell script \"softwareupdate --install \\\"$_clt_label\\\"\" with administrator privileges" \
+            >> "$_LOG_FILE" 2>&1
+        set -e
+        unspin
+    fi
+
+    rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress 2>/dev/null || true
+
+    _clt_major=$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables 2>/dev/null \
+        | awk '/version:/{print $2}' | cut -d. -f1)
+    if [ "$_clt_major" = "$_os_major" ]; then
+        step "Command Line Tools updated"
+    fi
 fi
 
 # ── Install mlx-audio (Both or Local Only on Apple Silicon) ──────
 if $IS_ARM64 && [ "$BACKEND_CHOICE" != "ElevenLabs Only" ]; then
     spin "Installing mlx-audio and downloading Kokoro model…"
     set +e
-    bash "$SCRIPT_DIR/install-local.sh" >/dev/null 2>&1
+    bash "$SCRIPT_DIR/install-local.sh" >> "$_LOG_FILE" 2>&1
     mlx_ok=$?
     set -e
     unspin
@@ -121,11 +161,12 @@ if $IS_ARM64 && [ "$BACKEND_CHOICE" != "ElevenLabs Only" ]; then
         step "mlx-audio installed"
     else
         printf '  \033[31m✗\033[0m  mlx-audio installation failed\n'
+        _mlx_err=$(tail -5 "$_LOG_FILE" 2>/dev/null | head -3 | tr '"\\' "'/")
         if [ "$BACKEND_CHOICE" = "Local Only" ]; then
-            osascript -e 'display dialog "Could not install local TTS.\n\nAn internet connection is required for the first install.\nPlease check your connection and try again." with title "Speak11" buttons {"OK"} default button "OK" with icon stop' 2>/dev/null
+            osascript -e "display dialog \"Could not install local TTS.\n\n${_mlx_err:-An internet connection is required for the first install.}\n\nFull log: ~/.local/share/speak11/install.log\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon stop" 2>/dev/null || true
             exit 1
         else
-            osascript -e 'display dialog "Could not install local TTS.\n\nElevenLabs will be used instead.\nYou can re-run the installer later to add local TTS." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+            osascript -e "display dialog \"Could not install local TTS.\n\n${_mlx_err:-Check your internet connection.}\n\nElevenLabs will be used instead.\nFull log: ~/.local/share/speak11/install.log\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon caution" 2>/dev/null || true
         fi
     fi
 fi
@@ -364,11 +405,11 @@ if [ "$settings_result" = "Install" ]; then
 
     mkdir -p "$APP_BUNDLE/Contents/MacOS"
 
-    # Compile
+    # Compile — use xcrun for proper SDK resolution
     spin "Compiling app…"
     compile_ok=0
     set +e
-    swiftc "$SCRIPT_DIR/Speak11.swift" -o "$APP_BINARY" -O 2>/dev/null
+    xcrun swiftc "$SCRIPT_DIR/Speak11.swift" -o "$APP_BINARY" -O 2>>"$_LOG_FILE"
     compile_ok=$?
     set -e
     unspin
@@ -376,7 +417,10 @@ if [ "$settings_result" = "Install" ]; then
     if [ $compile_ok -ne 0 ]; then
         printf '  \033[31m✗\033[0m  Compilation failed\n'
         printf '\n'
-        osascript -e 'display dialog "Could not compile the settings app.\n\nMake sure Xcode Command Line Tools are installed:\n  xcode-select --install" with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+        _swift_err=$(tail -5 "$_LOG_FILE" 2>/dev/null | head -3 | tr '"\\' "'/")
+        _swift_ver=$(xcrun swiftc --version 2>/dev/null | head -1 || echo "swiftc not found")
+        printf '  Swift: %s\n' "$_swift_ver" >> "$_LOG_FILE"
+        osascript -e "display dialog \"Could not compile the settings app.\n\n${_swift_err:-Unknown error.}\n\nTry updating Xcode Command Line Tools:\n  sudo rm -rf /Library/Developer/CommandLineTools\n  xcode-select --install\n\nFull log: ~/.local/share/speak11/install.log\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon caution" 2>/dev/null || true
     else
         step "App compiled"
 
@@ -443,7 +487,7 @@ for (n,name) in [(16,"icon_16x16"),(32,"icon_16x16@2x"),(32,"icon_32x32"),
 }
 SWIFT_END
         set +e
-        swift "$_ICONSCRIPT" "$_ICONSET" 2>/dev/null && \
+        xcrun swift "$_ICONSCRIPT" "$_ICONSET" 2>/dev/null && \
             iconutil -c icns "$_ICONSET" \
                 -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns" 2>/dev/null
         set -e
@@ -459,12 +503,12 @@ SWIFT_END
         printf '\n  \033[32mInstallation complete.\033[0m\n\n'
 
         # Offer login item
-        login_result=$(osascript -e 'button returned of (display dialog "Launch Speak11 automatically at login?" with title "Speak11" buttons {"Not Now", "Yes"} default button "Yes" with icon note)' 2>/dev/null)
+        login_result=$(osascript -e 'button returned of (display dialog "Launch Speak11 automatically at login?" with title "Speak11" buttons {"Not Now", "Yes"} default button "Yes" with icon note)' 2>/dev/null || true)
         if [ "$login_result" = "Yes" ]; then
             osascript -e "tell application \"System Events\" to make login item at end with properties {path:\"$APP_BUNDLE\", hidden:true}" 2>/dev/null || true
         fi
 
-        open "$APP_BUNDLE"
+        open "$APP_BUNDLE" || true
     fi
 fi
 
@@ -511,10 +555,10 @@ if [ "${settings_result:-}" = "Install" ] && [ "${compile_ok:-1}" -eq 0 ]; then
     if [ "${mlx_ok:-1}" -eq 0 ]; then
         _DONE_MSG="$_DONE_MSG\n\nLocal TTS is ready — the Kokoro voice model has been downloaded."
     fi
-    osascript -e "display dialog \"$_DONE_MSG\" with title \"Speak11\" buttons {\"Done\"} default button \"Done\" with icon note" 2>/dev/null
+    osascript -e "display dialog \"$_DONE_MSG\" with title \"Speak11\" buttons {\"Done\"} default button \"Done\" with icon note" 2>/dev/null || true
 else
     printf '\n  \033[32mInstallation complete.\033[0m\n\n'
-    result=$(osascript -e 'button returned of (display dialog "Speak11 is installed!\n\nOne last step: assign a keyboard shortcut.\n\n1. System Settings will open\n2. Go to Keyboard Shortcuts → Services → Text\n3. Find \"Speak Selection\" and double-click to assign a shortcut\n\nSuggested: ⌃⌥S (Control+Option+S)" with title "Speak11" buttons {"Done", "Open System Settings"} default button "Open System Settings" with icon note)' 2>/dev/null)
+    result=$(osascript -e 'button returned of (display dialog "Speak11 is installed!\n\nOne last step: assign a keyboard shortcut.\n\n1. System Settings will open\n2. Go to Keyboard Shortcuts → Services → Text\n3. Find \"Speak Selection\" and double-click to assign a shortcut\n\nSuggested: ⌃⌥S (Control+Option+S)" with title "Speak11" buttons {"Done", "Open System Settings"} default button "Open System Settings" with icon note)' 2>/dev/null || true)
     if [ "${result:-}" = "Open System Settings" ]; then
         open "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts"
     fi

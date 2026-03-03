@@ -359,13 +359,13 @@ section "Speak11.swift compile"
 
 if $FAST; then
     printf "  SKIP  (--fast mode)\n"
-elif ! command -v swiftc &>/dev/null; then
+elif ! xcrun swiftc --version &>/dev/null; then
     printf "  SKIP  swiftc not found\n"
 else
     TMPBIN=$(mktemp)
     rm -f "$TMPBIN"
     printf "        compiling… (this takes ~15s)\n"
-    if swiftc "$SETTINGS_SWIFT" -o "$TMPBIN" -O 2>/dev/null; then
+    if xcrun swiftc "$SETTINGS_SWIFT" -o "$TMPBIN" -O 2>/dev/null; then
         check "compiles without errors" "yes" "yes"
         check "binary is executable"    "yes" "$( [ -x "$TMPBIN" ] && echo yes || echo no )"
         rm -f "$TMPBIN"
@@ -1225,6 +1225,133 @@ check "install.command: Local Only + install fail exits with error" \
 
 check "install.command: Both + install fail falls back to ElevenLabs" \
     "yes" "$(grep -q 'ElevenLabs will be used instead' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# ── 25b. CLT auto-update logic ────────────────────────────────────
+
+section "CLT auto-update logic"
+
+# Structural: install.command checks CLT version against macOS version
+check "compares CLT major version to macOS major version" \
+    "yes" "$(grep -q 'sw_vers.*productVersion' "$SCRIPT_DIR/install.command" && \
+             grep -q 'pkgutil.*CLTools_Executables' "$SCRIPT_DIR/install.command" && \
+             grep -q '_clt_major.*_os_major' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# Structural: uses softwareupdate --install for the update
+check "uses softwareupdate --install to update CLT" \
+    "yes" "$(grep -q 'softwareupdate --install' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# Structural: uses xcrun swiftc (not bare swiftc) for compilation
+check "uses xcrun swiftc for compilation" \
+    "yes" "$(grep -q 'xcrun swiftc.*Speak11.swift' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# Structural: logs errors to install.log instead of /dev/null
+check "swiftc stderr goes to log file" \
+    "yes" "$(grep -q 'xcrun swiftc.*>>.*LOG_FILE' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "install-local.sh output goes to log file" \
+    "yes" "$(grep -q 'install-local.sh.*>>.*LOG_FILE' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# Simulation: test the version comparison logic with mocked commands
+_CLT_SIM_DIR=$(mktemp -d)
+
+# Mock sw_vers returning macOS 26
+cat > "$_CLT_SIM_DIR/sw_vers" << 'MOCKSW'
+#!/bin/bash
+echo "26.3"
+MOCKSW
+chmod +x "$_CLT_SIM_DIR/sw_vers"
+
+# Mock pkgutil returning old CLT version 15
+cat > "$_CLT_SIM_DIR/pkgutil" << 'MOCKPKG'
+#!/bin/bash
+echo "package-id: com.apple.pkg.CLTools_Executables"
+echo "version: 15.0.0.0.1.1234567890"
+MOCKPKG
+chmod +x "$_CLT_SIM_DIR/pkgutil"
+
+# Extract and test the version comparison
+_clt_os_major=$("$_CLT_SIM_DIR/sw_vers" -productVersion | cut -d. -f1)
+_clt_clt_major=$("$_CLT_SIM_DIR/pkgutil" --pkg-info=com.apple.pkg.CLTools_Executables 2>/dev/null \
+    | awk '/version:/{print $2}' | cut -d. -f1)
+
+check "sim: detects version mismatch (os=26, clt=15)" \
+    "mismatch" "$( [ "$_clt_clt_major" != "$_clt_os_major" ] && echo "mismatch" || echo "match")"
+
+# Mock pkgutil returning matching version
+cat > "$_CLT_SIM_DIR/pkgutil" << 'MOCKPKG2'
+#!/bin/bash
+echo "package-id: com.apple.pkg.CLTools_Executables"
+echo "version: 26.2.0.0.1.1764812424"
+MOCKPKG2
+chmod +x "$_CLT_SIM_DIR/pkgutil"
+
+_clt_clt_major2=$("$_CLT_SIM_DIR/pkgutil" --pkg-info=com.apple.pkg.CLTools_Executables 2>/dev/null \
+    | awk '/version:/{print $2}' | cut -d. -f1)
+
+check "sim: accepts matching version (os=26, clt=26)" \
+    "match" "$( [ "$_clt_clt_major2" != "$_clt_os_major" ] && echo "mismatch" || echo "match")"
+
+# Mock pkgutil returning nothing (CLT not installed)
+cat > "$_CLT_SIM_DIR/pkgutil" << 'MOCKPKG3'
+#!/bin/bash
+echo "No receipt for 'com.apple.pkg.CLTools_Executables' found at '/'." >&2
+exit 1
+MOCKPKG3
+chmod +x "$_CLT_SIM_DIR/pkgutil"
+
+_clt_clt_major3=$("$_CLT_SIM_DIR/pkgutil" --pkg-info=com.apple.pkg.CLTools_Executables 2>/dev/null \
+    | awk '/version:/{print $2}' | cut -d. -f1 || true)
+
+check "sim: triggers update when CLT missing" \
+    "update" "$( [ -z "$_clt_clt_major3" ] && echo "update" || echo "skip")"
+
+rm -rf "$_CLT_SIM_DIR"
+
+# ── 25c. install.command failure handling ─────────────────────────
+
+section "install.command failure handling"
+
+# Every osascript $(...) call must have || true to prevent set -e abort
+_osa_calls=$(grep -c '=$(osascript' "$SCRIPT_DIR/install.command")
+_osa_guarded=$(grep '=$(osascript' "$SCRIPT_DIR/install.command" | grep -c '|| true)')
+check "all osascript \$() calls have || true" \
+    "$_osa_calls" "$_osa_guarded"
+
+# Error messages interpolated into osascript must be sanitized (tr '"\\')
+check "mlx error sanitized before osascript" \
+    "yes" "$(grep '_mlx_err=.*| tr ' "$SCRIPT_DIR/install.command" | grep -q '"' && echo "yes" || echo "no")"
+
+check "swift error sanitized before osascript" \
+    "yes" "$(grep '_swift_err=.*| tr ' "$SCRIPT_DIR/install.command" | grep -q '"' && echo "yes" || echo "no")"
+
+# security keychain failure must not abort (uses if instead of bare command)
+check "keychain failure handled gracefully" \
+    "yes" "$(grep -q 'if security add-generic-password' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# open $APP_BUNDLE must have || true
+check "open app bundle has || true" \
+    "yes" "$(grep -q 'open "\$APP_BUNDLE" || true' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# Error dialog osascripts (display dialog with icon stop/caution) must have || true
+_err_dialogs=$(grep -c 'icon \(stop\|caution\)' "$SCRIPT_DIR/install.command")
+_err_guarded=$(grep 'icon \(stop\|caution\)' "$SCRIPT_DIR/install.command" | grep -c '|| true')
+check "all error dialogs have || true" \
+    "$_err_dialogs" "$_err_guarded"
+
+# Error messages reference the log file
+check "mlx error dialog references log file" \
+    "yes" "$(grep -A1 'Could not install local TTS' "$SCRIPT_DIR/install.command" | grep -q 'install.log' && echo "yes" || echo "no")"
+
+check "swift error dialog references log file" \
+    "yes" "$(grep -A1 'Could not compile' "$SCRIPT_DIR/install.command" | grep -q 'install.log' && echo "yes" || echo "no")"
+
+# Simulation: error message sanitization strips quotes
+_test_err='ERROR: Could not find "libfoo.dylib" in C:\path'
+_sanitized=$(echo "$_test_err" | tr '"\\' "'/")
+check "sim: quotes removed from error message" \
+    "no" "$(echo "$_sanitized" | grep -q '"' && echo "yes" || echo "no")"
+check "sim: backslashes removed from error message" \
+    "no" "$(echo "$_sanitized" | grep -q '\\\\' && echo "yes" || echo "no")"
 
 # ── 26. Backend submenu always visible ───────────────────────────
 
