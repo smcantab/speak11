@@ -2058,8 +2058,8 @@ check "local loop: error dialog only on first sentence" \
     "yes" "$(awk '/TTS_BACKEND.*=.*local/,/^else/' "$SPEAK_SH" | grep -q '\$_FIRST.*_ok.*-ne 0' && echo "yes" || echo "no")"
 
 # _FIRST flag: cloud path breaks to error handler only on first sentence
-check "cloud loop: break to error handler only on _FIRST" \
-    "yes" "$(awk '/ElevenLabs.*cloud/,/done/' "$SPEAK_SH" | grep -q 'if \$_FIRST' && echo "yes" || echo "no")"
+check "cloud loop: single break on TTS failure" \
+    "yes" "$(awk '/ElevenLabs.*cloud/,/done/' "$SPEAK_SH" | grep -q 'break' && echo "yes" || echo "no")"
 
 # Single sentence works: wait_audio after loop catches it
 check "pipeline handles single sentence (wait_audio after loop)" \
@@ -2074,8 +2074,8 @@ check "curl has --max-time for timeout protection" \
     "yes" "$(awk '/^run_elevenlabs_tts/,/^}/' "$SPEAK_SH" | grep -q 'max-time' && echo "yes" || echo "no")"
 
 # Mid-stream cloud failure stops silently (no dialog)
-check "cloud mid-stream failure: no osascript dialog" \
-    "yes" "$(awk '/mid-stream failure/,/break/' "$SPEAK_SH" | grep -qv 'osascript' && echo "yes" || echo "no")"
+check "cloud TTS failure: breaks without dialog" \
+    "yes" "$(awk '/run_elevenlabs_tts/,/break/' "$SPEAK_SH" | grep -qv 'osascript' && echo "yes" || echo "no")"
 
 # Fallback: network failure with both backends → tries local
 check "network failure + both: runs run_local_tts" \
@@ -2427,7 +2427,9 @@ cleanup() {
     [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
     [ -f "$PID_FILE" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$$" ] && rm -f "$PID_FILE"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 split_sentences() {
     python3 -c "
@@ -2589,7 +2591,9 @@ cleanup() {
     rm -f "$TMP_FILE" "$_PREV_TMP_FILE"
     [ -f "$PID_FILE" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$$" ] && rm -f "$PID_FILE"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 split_sentences() {
     python3 -c "
@@ -2609,12 +2613,10 @@ for p in parts:
 " <<< "$1" 2>/dev/null || printf '0\t%d\t%s\n' "${#1}" "$1"
 }
 
-# Fake run_elevenlabs_tts: creates a temp file with the sentence text
 run_elevenlabs_tts() {
     local sentence="$1"
     TMP_FILE=$(mktemp "${TMPDIR:-/tmp}/speak11_sim_tts_XXXXXXXXXX")
     printf '%s' "$sentence" > "$TMP_FILE"
-    # Simulate API latency (10ms)
     sleep 0.01
     HTTP_CODE="200"
     CURL_EXIT=0
@@ -2640,9 +2642,7 @@ wait_audio() {
     fi
 }
 
-# ── Run the cloud pipeline (mirrors speak.sh cloud loop) ──
 _SENTENCES=$(split_sentences "$TEXT")
-
 _FIRST=true
 while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
     [ -z "$_SENTENCE" ] && continue
@@ -2662,7 +2662,6 @@ echo "DONE" >> "$_SIM_LOG"
 SIMEOF
 chmod +x "$_SIMDIR/sim_cloud.sh"
 
-# Test: cloud pipeline plays sentences in order
 rm -f "$_SIM_LOG"
 TEXT="Alpha. Beta. Gamma." bash "$_SIMDIR/sim_cloud.sh" "$_SIMDIR" 2>/dev/null
 
@@ -2677,6 +2676,478 @@ check "sim-cloud: no file-missing errors" \
     "0" "$(grep -c 'ERROR:' "$_SIM_LOG" 2>/dev/null || true)"
 
 rm -rf "$_SIMDIR"
+
+# ── 57b. Simulation: per-sentence billing and interruption ─────────
+#
+# Both the cloud (ElevenLabs) and local (Kokoro) pipelines generate one
+# sentence at a time with one-sentence lookahead.  This means:
+#   - Each API call / Kokoro generation handles a single sentence
+#   - Interrupting stops further generation (saves credits / GPU time)
+#   - At most played + 1 generations occur (the pre-fetched lookahead)
+#
+# The simulation uses separate traps matching speak.sh:
+#   trap cleanup EXIT          — cleanup on any exit
+#   trap 'exit 143' TERM      — SIGTERM causes immediate exit (cleanup via EXIT)
+#   trap 'exit 130' INT       — SIGINT  causes immediate exit
+
+section "Simulation: per-sentence billing and interruption"
+
+# ── Helper: create a pipeline simulation script ──
+# Usage: _make_pipeline_sim <path> <backend> <play_sleep>
+#   backend: "cloud" or "local"
+#   play_sleep: seconds for simulated playback (e.g. "0.1" or "0.3")
+_make_pipeline_sim() {
+    local path="$1" backend="$2" play_sleep="$3"
+    cat > "$path" << SIMEOF
+#!/bin/bash
+_SIMDIR="\$1"
+_SIM_LOG="\$_SIMDIR/play.log"
+_GEN_LOG="\$_SIMDIR/gen.log"
+PID_FILE="\$_SIMDIR/tts.pid"
+TMP_FILE=""
+TMP_DIR=""
+PLAY_PID=""
+_PREV_TMP_FILE=""
+_PREV_TMP_DIR=""
+
+echo "\$\$" > "\$PID_FILE"
+
+cleanup() {
+    set +e
+    pkill -P \$\$ 2>/dev/null
+    [ -n "\$PLAY_PID" ] && kill "\$PLAY_PID" 2>/dev/null
+    rm -f "\$TMP_FILE" "\$_PREV_TMP_FILE"
+    [ -n "\$TMP_DIR" ] && rm -rf "\$TMP_DIR"
+    [ -n "\$_PREV_TMP_DIR" ] && rm -rf "\$_PREV_TMP_DIR"
+    [ -f "\$PID_FILE" ] && [ "\$(cat "\$PID_FILE" 2>/dev/null)" = "\$\$" ] && rm -f "\$PID_FILE"
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+
+split_sentences() {
+    python3 -c "
+import re, sys
+text = sys.stdin.read().rstrip('\n')
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+pos = 0
+for p in parts:
+    p = p.strip()
+    if not p:
+        continue
+    idx = text.find(p, pos)
+    if idx == -1:
+        idx = pos
+    print(f'{idx}\t{len(p)}\t{p}')
+    pos = idx + len(p)
+" <<< "\$1" 2>/dev/null || printf '0\t%d\t%s\n' "\${#1}" "\$1"
+}
+
+run_tts() {
+    echo "GEN:\$1" >> "\$_GEN_LOG"
+    TMP_DIR=\$(mktemp -d "\${TMPDIR:-/tmp}/speak11_sim_gen_XXXXXXXXXX")
+    TMP_FILE="\$TMP_DIR/speak11.wav"
+    printf '%s' "\$1" > "\$TMP_FILE"
+    sleep 0.01
+    [ -s "\$TMP_FILE" ]
+}
+
+play_audio() {
+    if [ ! -s "\$TMP_FILE" ]; then
+        echo "ERROR:file_missing" >> "\$_SIM_LOG"
+        return
+    fi
+    echo "PLAY:\$(cat "\$TMP_FILE")" >> "\$_SIM_LOG"
+    sleep $play_sleep &
+    PLAY_PID=\$!
+}
+
+wait_audio() {
+    [ -n "\$PLAY_PID" ] && { wait "\$PLAY_PID" 2>/dev/null || true; PLAY_PID=""; }
+}
+
+_SENTENCES=\$(split_sentences "\$TEXT")
+SIMEOF
+
+    if [ "$backend" = "cloud" ]; then
+        cat >> "$path" << 'SIMEOF2'
+_FIRST=true
+while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
+    [ -z "$_SENTENCE" ] && continue
+    if ! run_tts "$_SENTENCE"; then
+        if $_FIRST; then break; fi
+        break
+    fi
+    wait_audio
+    [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
+    _FIRST=false
+    _PREV_TMP_FILE="$TMP_FILE"
+    play_audio
+done <<< "$_SENTENCES"
+wait_audio
+echo "DONE" >> "$_SIM_LOG"
+SIMEOF2
+    else
+        cat >> "$path" << 'SIMEOF3'
+_SAVED_TEXT="$TEXT"
+_FIRST=true
+while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
+    [ -z "$_SENTENCE" ] && continue
+    TEXT="$_SENTENCE"
+    run_tts "$_SENTENCE"
+    _ok=$?
+    if $_FIRST && [ $_ok -ne 0 ]; then exit 1; fi
+    if [ $_ok -eq 0 ]; then
+        wait_audio
+        [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
+        [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
+        _FIRST=false
+        _PREV_TMP_FILE="$TMP_FILE"
+        _PREV_TMP_DIR="$TMP_DIR"
+        play_audio
+    fi
+done <<< "$_SENTENCES"
+wait_audio
+TEXT="$_SAVED_TEXT"
+echo "DONE" >> "$_SIM_LOG"
+SIMEOF3
+    fi
+    chmod +x "$path"
+}
+
+# ── Helper: run interrupt test ──
+# Usage: _run_interrupt_test <sim_path> <simdir> <text> <wait_for_plays>
+# Returns: sets _GEN_COUNT and _PLAY_COUNT
+_run_interrupt_test() {
+    local sim_path="$1" simdir="$2" text="$3" wait_for="$4"
+    rm -f "$simdir/play.log" "$simdir/gen.log"
+    TEXT="$text" bash "$sim_path" "$simdir" 2>/dev/null &
+    local sim_pid=$!
+    local _i
+    for _i in $(seq 1 80); do
+        [ "$(grep -c '^PLAY:' "$simdir/play.log" 2>/dev/null)" -ge "$wait_for" ] 2>/dev/null && break
+        sleep 0.05
+    done
+    kill "$sim_pid" 2>/dev/null
+    wait "$sim_pid" 2>/dev/null || true
+    _GEN_COUNT=$(grep -c '^GEN:' "$simdir/gen.log" 2>/dev/null || echo 0)
+    _PLAY_COUNT=$(grep -c '^PLAY:' "$simdir/play.log" 2>/dev/null || echo 0)
+}
+
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+
+# ── Cloud (ElevenLabs): per-sentence API calls ──
+
+_make_pipeline_sim "$_SIMDIR/sim_cloud.sh" "cloud" "0.1"
+_make_pipeline_sim "$_SIMDIR/sim_cloud_slow.sh" "cloud" "0.5"
+
+# Full run: each sentence gets its own API call
+rm -f "$_SIMDIR/play.log" "$_SIMDIR/gen.log"
+TEXT="One. Two. Three. Four. Five." bash "$_SIMDIR/sim_cloud.sh" "$_SIMDIR" 2>/dev/null
+
+check "cloud-billing: 5 API calls for 5 sentences" \
+    "5" "$(grep -c '^GEN:' "$_SIMDIR/gen.log" 2>/dev/null || echo 0)"
+
+check "cloud-billing: each call sends one sentence" \
+    "GEN:One.|GEN:Two.|GEN:Three.|GEN:Four.|GEN:Five." \
+    "$(cat "$_SIMDIR/gen.log" | tr '\n' '|' | sed 's/|$//')"
+
+check "cloud-billing: all 5 played" \
+    "5" "$(grep -c '^PLAY:' "$_SIMDIR/play.log" 2>/dev/null || echo 0)"
+
+# Single sentence: no splitting overhead
+rm -f "$_SIMDIR/play.log" "$_SIMDIR/gen.log"
+TEXT="Just one sentence." bash "$_SIMDIR/sim_cloud.sh" "$_SIMDIR" 2>/dev/null
+
+check "cloud-billing: single sentence = 1 API call" \
+    "1" "$(grep -c '^GEN:' "$_SIMDIR/gen.log" 2>/dev/null || echo 0)"
+
+# Interrupted: kill after 2 plays of 10 sentences → credits saved
+_run_interrupt_test "$_SIMDIR/sim_cloud_slow.sh" "$_SIMDIR" \
+    "S1. S2. S3. S4. S5. S6. S7. S8. S9. S10." 2
+
+check "cloud-interrupt: credits saved (< 10 API calls)" \
+    "yes" "$([ "$_GEN_COUNT" -lt 10 ] && echo "yes" || echo "no")"
+
+check "cloud-interrupt: API calls <= played + 1 (lookahead)" \
+    "yes" "$([ "$_GEN_COUNT" -le $((_PLAY_COUNT + 1)) ] && echo "yes" || echo "no")"
+
+# ── Local (Kokoro): per-sentence generation ──
+
+_make_pipeline_sim "$_SIMDIR/sim_local.sh" "local" "0.1"
+_make_pipeline_sim "$_SIMDIR/sim_local_slow.sh" "local" "0.5"
+
+# Full run
+rm -f "$_SIMDIR/play.log" "$_SIMDIR/gen.log"
+TEXT="One. Two. Three. Four. Five." bash "$_SIMDIR/sim_local.sh" "$_SIMDIR" 2>/dev/null
+
+check "local-billing: 5 generations for 5 sentences" \
+    "5" "$(grep -c '^GEN:' "$_SIMDIR/gen.log" 2>/dev/null || echo 0)"
+
+check "local-billing: each generation is one sentence" \
+    "GEN:One.|GEN:Two.|GEN:Three.|GEN:Four.|GEN:Five." \
+    "$(cat "$_SIMDIR/gen.log" | tr '\n' '|' | sed 's/|$//')"
+
+check "local-billing: all 5 played" \
+    "5" "$(grep -c '^PLAY:' "$_SIMDIR/play.log" 2>/dev/null || echo 0)"
+
+# Single sentence
+rm -f "$_SIMDIR/play.log" "$_SIMDIR/gen.log"
+TEXT="Just one sentence." bash "$_SIMDIR/sim_local.sh" "$_SIMDIR" 2>/dev/null
+
+check "local-billing: single sentence = 1 generation" \
+    "1" "$(grep -c '^GEN:' "$_SIMDIR/gen.log" 2>/dev/null || echo 0)"
+
+# Interrupted: kill after 2 plays of 10 sentences → skips remaining
+_run_interrupt_test "$_SIMDIR/sim_local_slow.sh" "$_SIMDIR" \
+    "S1. S2. S3. S4. S5. S6. S7. S8. S9. S10." 2
+
+check "local-interrupt: skipped generations (< 10)" \
+    "yes" "$([ "$_GEN_COUNT" -lt 10 ] && echo "yes" || echo "no")"
+
+check "local-interrupt: generations <= played + 1 (lookahead)" \
+    "yes" "$([ "$_GEN_COUNT" -le $((_PLAY_COUNT + 1)) ] && echo "yes" || echo "no")"
+
+# ── Pipeline overlap: next sentence pre-generated during playback ──
+# With slow playback (0.5s) and fast gen (10ms), the pipeline should
+# have the next sentence ready before the current one finishes.
+rm -f "$_SIMDIR/play.log" "$_SIMDIR/gen.log"
+TEXT="A. B. C." bash "$_SIMDIR/sim_cloud_slow.sh" "$_SIMDIR" 2>/dev/null
+
+check "pipeline-overlap: all 3 sentences played" \
+    "3" "$(grep -c '^PLAY:' "$_SIMDIR/play.log" 2>/dev/null || echo 0)"
+
+check "pipeline-overlap: completed successfully" \
+    "yes" "$(grep -q '^DONE' "$_SIMDIR/play.log" && echo "yes" || echo "no")"
+
+rm -rf "$_SIMDIR"
+unset -f _make_pipeline_sim _run_interrupt_test
+
+# ── 57c. Regression: combined trap pattern continues after SIGTERM ──
+#
+# The OLD broken pattern: `trap cleanup EXIT INT TERM`
+# On SIGTERM, bash runs cleanup but does NOT exit — the loop continues.
+# The CORRECT pattern: separate traps with explicit `exit`.
+# This test proves the bug exists and our fix prevents it.
+
+section "Regression: combined trap bug"
+
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+
+# Script with BROKEN trap pattern (combined)
+cat > "$_SIMDIR/broken_trap.sh" << 'SIMEOF'
+#!/bin/bash
+_LOG="$1"
+cleanup() { set +e; echo "CLEANUP" >> "$_LOG"; }
+trap cleanup EXIT INT TERM
+for i in 1 2 3 4 5; do
+    echo "ITER:$i" >> "$_LOG"
+    sleep 0.5 &
+    wait $! 2>/dev/null || true
+done
+echo "FINISHED" >> "$_LOG"
+SIMEOF
+chmod +x "$_SIMDIR/broken_trap.sh"
+
+# Script with CORRECT trap pattern (separate)
+cat > "$_SIMDIR/correct_trap.sh" << 'SIMEOF'
+#!/bin/bash
+_LOG="$1"
+cleanup() { set +e; echo "CLEANUP" >> "$_LOG"; }
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+for i in 1 2 3 4 5; do
+    echo "ITER:$i" >> "$_LOG"
+    sleep 0.5 &
+    wait $! 2>/dev/null || true
+done
+echo "FINISHED" >> "$_LOG"
+SIMEOF
+chmod +x "$_SIMDIR/correct_trap.sh"
+
+# Run broken script, kill after first iteration
+rm -f "$_SIMDIR/broken.log"
+bash "$_SIMDIR/broken_trap.sh" "$_SIMDIR/broken.log" &
+_PID=$!
+for _i in $(seq 1 40); do
+    grep -q 'ITER:1' "$_SIMDIR/broken.log" 2>/dev/null && break
+    sleep 0.05
+done
+kill "$_PID" 2>/dev/null
+wait "$_PID" 2>/dev/null || true
+sleep 0.2
+
+_BROKEN_ITERS=$(grep -c '^ITER:' "$_SIMDIR/broken.log" 2>/dev/null || echo 0)
+check "broken trap: script continues after SIGTERM (iterations > 1)" \
+    "yes" "$([ "$_BROKEN_ITERS" -gt 1 ] && echo "yes" || echo "no")"
+
+# Run correct script, kill after first iteration
+rm -f "$_SIMDIR/correct.log"
+bash "$_SIMDIR/correct_trap.sh" "$_SIMDIR/correct.log" &
+_PID=$!
+for _i in $(seq 1 40); do
+    grep -q 'ITER:1' "$_SIMDIR/correct.log" 2>/dev/null && break
+    sleep 0.05
+done
+kill "$_PID" 2>/dev/null
+wait "$_PID" 2>/dev/null || true
+sleep 0.2
+
+_CORRECT_ITERS=$(grep -c '^ITER:' "$_SIMDIR/correct.log" 2>/dev/null || echo 0)
+check "correct trap: script stops on SIGTERM (iterations <= 2)" \
+    "yes" "$([ "$_CORRECT_ITERS" -le 2 ] && echo "yes" || echo "no")"
+
+check "correct trap: did not reach FINISHED" \
+    "no" "$(grep -q 'FINISHED' "$_SIMDIR/correct.log" 2>/dev/null && echo "yes" || echo "no")"
+
+check "correct trap: cleanup handler ran" \
+    "yes" "$(grep -q 'CLEANUP' "$_SIMDIR/correct.log" 2>/dev/null && echo "yes" || echo "no")"
+
+rm -rf "$_SIMDIR"
+
+# ── 57d. Regression: cleanup idempotency ─────────────────────────
+#
+# cleanup() may run twice on INT/TERM (once in the trap, once via EXIT).
+# All operations must be safe to repeat without errors.
+
+section "Regression: cleanup idempotency"
+
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+
+(
+    set +e
+    TMP_FILE="$_SIMDIR/audio.wav"
+    TMP_DIR="$_SIMDIR/tmpdir"
+    _PREV_TMP_FILE="$_SIMDIR/prev.wav"
+    _PREV_TMP_DIR="$_SIMDIR/prevdir"
+    PID_FILE="$_SIMDIR/tts.pid"
+    STATUS_FILE="$_SIMDIR/status"
+    PLAY_PID=""
+    _CURL_PID=""
+    _DAEMON_PID=""
+
+    touch "$TMP_FILE" "$_PREV_TMP_FILE"
+    mkdir -p "$TMP_DIR" "$_PREV_TMP_DIR"
+    echo "$$" > "$PID_FILE"
+
+    # Define cleanup matching speak.sh
+    cleanup() {
+        set +e
+        [ -n "$_CURL_PID" ] && kill "$_CURL_PID" 2>/dev/null
+        [ -n "$_DAEMON_PID" ] && { pkill -P "$_DAEMON_PID" 2>/dev/null; kill "$_DAEMON_PID" 2>/dev/null; }
+        [ -n "$PLAY_PID" ] && kill "$PLAY_PID" 2>/dev/null
+        rm -f "$TMP_FILE" "$_PREV_TMP_FILE" "${TMP_FILE}.code"
+        [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
+        [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
+        [ -f "$PID_FILE" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$$" ] && rm -f "$PID_FILE"
+    }
+
+    # Call cleanup TWICE — simulating INT/TERM + EXIT
+    cleanup
+    cleanup
+
+    echo "ok"
+) > "$_SIMDIR/result" 2>"$_SIMDIR/stderr"
+
+check "double cleanup: no crash" \
+    "ok" "$(cat "$_SIMDIR/result" 2>/dev/null)"
+
+check "double cleanup: no errors on stderr" \
+    "0" "$(wc -l < "$_SIMDIR/stderr" 2>/dev/null | tr -d ' ')"
+
+rm -rf "$_SIMDIR"
+
+# ── 57e. Regression: STATUS_FILE offset values for multi-sentence ──
+#
+# The respeak position bug: without correct offsets in STATUS_FILE,
+# Swift maps progress through current sentence to the full text length.
+# Verify that for multi-sentence text, the last STATUS_FILE contains
+# the offset of the LAST sentence, not 0 or a full-text value.
+
+section "Regression: STATUS_FILE sentence offsets"
+
+_STUBS=$(mktemp -d)
+_TESTTMP=$(mktemp -d)
+printf '#!/bin/bash\necho "fake-key"\n' > "$_STUBS/security"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/osascript"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
+cat > "$_STUBS/afinfo" << 'STUB'
+#!/bin/bash
+echo "estimated duration: 2.000000 sec"
+STUB
+cat > "$_STUBS/curl" << 'STUB'
+#!/bin/bash
+prev=""
+for a in "$@"; do
+    if [ "$prev" = "-o" ]; then printf "fakeaudio" > "$a"; fi
+    prev="$a"
+done
+printf "200"
+STUB
+printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
+chmod +x "$_STUBS"/*
+
+# 3 sentences: "Alpha. Beta. Gamma." → offsets 0, 7, 13
+echo "Alpha. Beta. Gamma." | \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto \
+    bash "$SPEAK_SH" >/dev/null 2>&1 || true
+
+# STATUS_FILE should contain the LAST sentence's offset and length.
+# "Gamma." starts at offset 13, length 6.
+_STATUS_OFFSET=$(sed -n '3p' "$_TESTTMP/speak11_status" 2>/dev/null)
+_STATUS_LEN=$(sed -n '4p' "$_TESTTMP/speak11_status" 2>/dev/null)
+
+check "STATUS_FILE offset is last sentence (13, not 0)" \
+    "13" "$_STATUS_OFFSET"
+
+check "STATUS_FILE length is last sentence (6)" \
+    "6" "$_STATUS_LEN"
+
+# Verify offset is NOT 0 (which would indicate the old bug where offsets
+# were not passed through the pipeline)
+check "STATUS_FILE offset is not zero (regression guard)" \
+    "yes" "$([ "${_STATUS_OFFSET:-0}" -gt 0 ] 2>/dev/null && echo "yes" || echo "no")"
+
+rm -rf "$_STUBS" "$_TESTTMP"
+
+# Repeat for local backend: verify offsets work in the local pipeline too
+_STUBS=$(mktemp -d)
+_TESTTMP=$(mktemp -d)
+printf '#!/bin/bash\nexit 1\n' > "$_STUBS/security"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/osascript"
+printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
+cat > "$_STUBS/afinfo" << 'STUB'
+#!/bin/bash
+echo "estimated duration: 2.000000 sec"
+STUB
+cat > "$_STUBS/python3" << 'PYSTUB'
+#!/bin/bash
+for arg in "$@"; do
+    if [ "$arg" = "mlx_audio.tts.generate" ]; then
+        printf "RIFF" > "speak11.wav"
+        exit 0
+    fi
+done
+# Pass through to real python3 for split_sentences etc.
+/usr/bin/python3 "$@"
+PYSTUB
+chmod +x "$_STUBS"/*
+
+echo "Alpha. Beta. Gamma." | \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
+    bash "$SPEAK_SH" >/dev/null 2>&1 || true
+
+_STATUS_OFFSET=$(sed -n '3p' "$_TESTTMP/speak11_status" 2>/dev/null)
+_STATUS_LEN=$(sed -n '4p' "$_TESTTMP/speak11_status" 2>/dev/null)
+
+check "local: STATUS_FILE offset is last sentence (13)" \
+    "13" "$_STATUS_OFFSET"
+
+check "local: STATUS_FILE length is last sentence (6)" \
+    "6" "$_STATUS_LEN"
+
+rm -rf "$_STUBS" "$_TESTTMP"
 
 # ── 58. Simulation: toggle kills process and cleans up ────────────
 

@@ -427,10 +427,7 @@ else
     while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
         [ -z "$_SENTENCE" ] && continue
         if ! run_elevenlabs_tts "$_SENTENCE"; then
-            if $_FIRST; then
-                break  # fall through to error handling below
-            fi
-            break  # mid-stream failure, stop silently
+            break  # first sentence → error handler below; later → exit silently
         fi
         wait_audio
         [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
