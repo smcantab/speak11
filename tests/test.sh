@@ -291,6 +291,11 @@ check "Swift: killCurrentProcess method exists" \
     "yes" "$(grep -q 'func killCurrentProcess' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 check "Swift: calculateRemainingText method exists" \
     "yes" "$(grep -q 'func calculateRemainingText' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# calculateRemainingText uses per-sentence offset from STATUS_FILE
+check "Swift: calculateRemainingText uses sentence offset for position" \
+    "yes" "$(grep -q 'charOffset + Int' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
 check "Swift: respeak method exists" \
     "yes" "$(grep -q 'func respeak' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 check "Swift: scheduleRespeak method exists" \
@@ -724,6 +729,10 @@ check "speak.sh writes TEXT_FILE" \
 check "play_audio writes STATUS_FILE with afinfo duration" \
     "yes" "$(grep -q 'afinfo.*STATUS_FILE\|STATUS_FILE.*afinfo\|STATUS_FILE' "$SPEAK_SH" && grep -q 'afinfo' "$SPEAK_SH" && echo "yes" || echo "no")"
 
+# play_audio always writes 4-line STATUS_FILE (offset defaults to 0)
+check "play_audio: writes offset and len to STATUS_FILE" \
+    "yes" "$(awk '/^play_audio\(\)/,/^}/' "$SPEAK_SH" | grep -q '${1:-0}.*${2:-0}' && echo "yes" || echo "no")"
+
 # Functional test: run speak.sh with auto backend (cloud path) and verify files are created
 _STUBS=$(mktemp -d)
 _TESTTMP=$(mktemp -d)
@@ -759,8 +768,8 @@ check "TEXT_FILE created with piped text" \
 check "STATUS_FILE created" \
     "yes" "$([ -f "$_TESTTMP/speak11_status" ] && echo "yes" || echo "no")"
 
-check "STATUS_FILE has two lines" \
-    "2" "$([ -f "$_TESTTMP/speak11_status" ] && wc -l < "$_TESTTMP/speak11_status" | tr -d ' ' || echo "0")"
+check "STATUS_FILE has four lines (epoch, duration, offset, len)" \
+    "4" "$([ -f "$_TESTTMP/speak11_status" ] && wc -l < "$_TESTTMP/speak11_status" | tr -d ' ' || echo "0")"
 
 # First line should be a recent epoch timestamp (within last 60 seconds)
 _STATUS_EPOCH=$(head -1 "$_TESTTMP/speak11_status" 2>/dev/null || echo "0")
@@ -1591,14 +1600,15 @@ check "speak.sh: split_sentences function exists" \
 check "speak.sh: split_sentences uses regex on sentence boundaries" \
     "yes" "$(grep -q 're.split' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: local path loops over sentences" \
-    "yes" "$(awk '/TTS_BACKEND.*=.*local/,/^else/' "$SPEAK_SH" | grep -q 'while.*read.*_SENTENCE' && echo "yes" || echo "no")"
-
-check "speak.sh: cloud path loops over sentences" \
-    "yes" "$(awk '/ElevenLabs.*cloud/,/^fi/' "$SPEAK_SH" | grep -q 'while.*read.*_SENTENCE' && echo "yes" || echo "no")"
-
 check "speak.sh: run_elevenlabs_tts function exists" \
     "yes" "$(grep -q 'run_elevenlabs_tts()' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Pipeline loops parse offset/len from split_sentences and pass to play_audio
+check "speak.sh: local loop passes sentence offset to play_audio" \
+    "yes" "$(awk '/TTS_BACKEND.*=.*local/,/^else/' "$SPEAK_SH" | grep -q 'play_audio.*_OFFSET.*_SENT_LEN' && echo "yes" || echo "no")"
+
+check "speak.sh: cloud loop passes sentence offset to play_audio" \
+    "yes" "$(awk '/ElevenLabs.*cloud/,/^fi/' "$SPEAK_SH" | grep -q 'play_audio.*_OFFSET.*_SENT_LEN' && echo "yes" || echo "no")"
 
 # Functional tests for sentence splitting
 _SPLIT_PY="${VENV_PYTHON:-python3}"
@@ -1921,6 +1931,52 @@ check "split: double space between sentences" \
 # split_sentences has a fallback if python fails
 check "split_sentences has fallback on python failure" \
     "yes" "$(grep -q '|| printf' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# ── 46b. Sentence splitting: offset format ─────────────────────
+
+section "Sentence splitting: offset format"
+
+# The new split_sentences outputs offset<TAB>len<TAB>sentence per line.
+_test_split_offsets() {
+    local py="${VENV_PYTHON:-python3}"
+    [ -x "$py" ] || py=python3
+    "$py" -c "
+import re, sys
+text = sys.stdin.read().rstrip('\n')
+parts = re.split(r'(?<=[.!?;:])\s+', text)
+pos = 0
+for p in parts:
+    p = p.strip()
+    if not p:
+        continue
+    idx = text.find(p, pos)
+    if idx == -1:
+        idx = pos
+    print(f'{idx}\t{len(p)}\t{p}')
+    pos = idx + len(p)
+" <<< "$1" 2>/dev/null
+}
+
+# Verify speak.sh split_sentences uses offset format
+check "split_sentences outputs offset format" \
+    "yes" "$(grep -q "print(f'" "$SPEAK_SH" && grep -q 'idx.*len(p)' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Two sentences: verify format and offset computation
+_OFF_RESULT=$(_test_split_offsets "Hello. World.")
+check "offset: format is offset<TAB>len<TAB>sentence" \
+    "0	6	Hello." "$(echo "$_OFF_RESULT" | head -1)"
+check "offset: second sentence offset accounts for gap" \
+    "7	6	World." "$(echo "$_OFF_RESULT" | sed -n '2p')"
+
+# Repeated sentences: offsets advance (not all 0)
+_OFF_RESULT=$(_test_split_offsets "Yes. Yes. Yes.")
+check "offset: repeated sentences advance correctly" \
+    "0|5|10" "$(echo "$_OFF_RESULT" | cut -f1 | tr '\n' '|' | sed 's/|$//')"
+
+# David Frum: the bug-triggering example (colon splits too)
+_OFF_RESULT=$(_test_split_offsets "David Frum: Hello, and welcome to The David Frum Show. I'm David Frum, a staff writer at The Atlantic.")
+check "offset: David Frum third sentence at 55" \
+    "55" "$(echo "$_OFF_RESULT" | sed -n '3p' | cut -f1)"
 
 # ── 47. Temp file lifecycle ──────────────────────────────────────
 
@@ -2376,13 +2432,19 @@ trap cleanup EXIT INT TERM
 split_sentences() {
     python3 -c "
 import re, sys
-text = sys.stdin.read().strip()
+text = sys.stdin.read().rstrip('\n')
 parts = re.split(r'(?<=[.!?;:])\s+', text)
+pos = 0
 for p in parts:
     p = p.strip()
-    if p:
-        print(p)
-" <<< "$1" 2>/dev/null || printf '%s\n' "$1"
+    if not p:
+        continue
+    idx = text.find(p, pos)
+    if idx == -1:
+        idx = pos
+    print(f'{idx}\t{len(p)}\t{p}')
+    pos = idx + len(p)
+" <<< "$1" 2>/dev/null || printf '0\t%d\t%s\n' "${#1}" "$1"
 }
 
 # Fake run_local_tts: creates a WAV file (just text content for verification)
@@ -2423,7 +2485,7 @@ _SENTENCES=$(split_sentences "$TEXT")
 
 _SAVED_TEXT="$TEXT"
 _FIRST=true
-while IFS= read -r _SENTENCE; do
+while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
     [ -z "$_SENTENCE" ] && continue
     TEXT="$_SENTENCE"
     run_local_tts
@@ -2532,13 +2594,19 @@ trap cleanup EXIT INT TERM
 split_sentences() {
     python3 -c "
 import re, sys
-text = sys.stdin.read().strip()
+text = sys.stdin.read().rstrip('\n')
 parts = re.split(r'(?<=[.!?;:])\s+', text)
+pos = 0
 for p in parts:
     p = p.strip()
-    if p:
-        print(p)
-" <<< "$1" 2>/dev/null || printf '%s\n' "$1"
+    if not p:
+        continue
+    idx = text.find(p, pos)
+    if idx == -1:
+        idx = pos
+    print(f'{idx}\t{len(p)}\t{p}')
+    pos = idx + len(p)
+" <<< "$1" 2>/dev/null || printf '0\t%d\t%s\n' "${#1}" "$1"
 }
 
 # Fake run_elevenlabs_tts: creates a temp file with the sentence text
@@ -2576,7 +2644,7 @@ wait_audio() {
 _SENTENCES=$(split_sentences "$TEXT")
 
 _FIRST=true
-while IFS= read -r _SENTENCE; do
+while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
     [ -z "$_SENTENCE" ] && continue
     if ! run_elevenlabs_tts "$_SENTENCE"; then
         if $_FIRST; then break; fi

@@ -520,7 +520,16 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         // For short texts or near the end, restart from beginning
         if text.count < 100 || ratio > 0.95 { return text }
 
-        let approxCharPos = Int(Double(text.count) * ratio)
+        // Use per-sentence offset from 4-line STATUS_FILE when available
+        let approxCharPos: Int
+        if lines.count >= 4,
+           let charOffset = Int(lines[2]),
+           let sentenceLen = Int(lines[3]),
+           sentenceLen > 0 {
+            approxCharPos = charOffset + Int(Double(sentenceLen) * ratio)
+        } else {
+            approxCharPos = Int(Double(text.count) * ratio)
+        }
 
         // Find the nearest sentence boundary at or after approxCharPos
         let searchStart = max(0, approxCharPos - 20)

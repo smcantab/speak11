@@ -162,13 +162,19 @@ split_sentences() {
     [ -x "$py" ] || py=python3
     "$py" -c "
 import re, sys
-text = sys.stdin.read().strip()
+text = sys.stdin.read().rstrip('\n')
 parts = re.split(r'(?<=[.!?;:])\s+', text)
+pos = 0
 for p in parts:
     p = p.strip()
-    if p:
-        print(p)
-" <<< "$1" 2>/dev/null || printf '%s\n' "$1"
+    if not p:
+        continue
+    idx = text.find(p, pos)
+    if idx == -1:
+        idx = pos
+    print(f'{idx}\t{len(p)}\t{p}')
+    pos = idx + len(p)
+" <<< "$1" 2>/dev/null || printf '0\t%d\t%s\n' "${#1}" "$1"
 }
 
 # ── Local TTS helper ────────────────────────────────────────────
@@ -324,7 +330,7 @@ run_local_tts() {
 play_audio() {
     local duration
     duration=$(afinfo "$TMP_FILE" 2>/dev/null | awk '/estimated duration/{print $3}')
-    printf '%s\n%s\n' "$(date +%s)" "${duration:-0}" > "$STATUS_FILE"
+    printf '%s\n%s\n%s\n%s\n' "$(date +%s)" "${duration:-0}" "${1:-0}" "${2:-0}" > "$STATUS_FILE"
     afplay "$TMP_FILE" &
     PLAY_PID=$!
 }
@@ -393,7 +399,7 @@ if [ "$TTS_BACKEND" = "local" ]; then
     # so there is no audible gap between sentences.
     _SAVED_TEXT="$TEXT"
     _FIRST=true
-    while IFS= read -r _SENTENCE; do
+    while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
         [ -z "$_SENTENCE" ] && continue
         TEXT="$_SENTENCE"
         run_local_tts
@@ -409,7 +415,7 @@ if [ "$TTS_BACKEND" = "local" ]; then
             _FIRST=false
             _PREV_TMP_FILE="$TMP_FILE"
             _PREV_TMP_DIR="$TMP_DIR"
-            play_audio
+            play_audio "$_OFFSET" "$_SENT_LEN"
         fi
     done <<< "$_SENTENCES"
     wait_audio
@@ -418,7 +424,7 @@ else
     # ── ElevenLabs (cloud API) ───────────────────────────────────
     # Pipeline: generate next sentence while the current one plays.
     _FIRST=true
-    while IFS= read -r _SENTENCE; do
+    while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
         [ -z "$_SENTENCE" ] && continue
         if ! run_elevenlabs_tts "$_SENTENCE"; then
             if $_FIRST; then
@@ -430,7 +436,7 @@ else
         [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
         _FIRST=false
         _PREV_TMP_FILE="$TMP_FILE"
-        play_audio
+        play_audio "$_OFFSET" "$_SENT_LEN"
     done <<< "$_SENTENCES"
     wait_audio
 
