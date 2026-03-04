@@ -104,15 +104,52 @@ if $IS_ARM64; then
 fi
 
 # ── API Key ──────────────────────────────────────────────────────
+# Validate a key by calling /v1/user/subscription (needs User Read permission).
+# Sets _KEY_ERROR to an error message, or empty on success.
+validate_api_key() {
+    _KEY_ERROR=""
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+        -H "xi-api-key: $1" \
+        "https://api.elevenlabs.io/v1/user/subscription" 2>/dev/null) || true
+    case "$http_code" in
+        200) _KEY_ERROR="" ;;
+        401) _KEY_ERROR="Invalid API key. Check that you copied the full key." ;;
+        403) _KEY_ERROR="This key is missing required permissions.\\nEnable Text-to-Speech and User Read at elevenlabs.io." ;;
+        000) _KEY_ERROR="Could not reach ElevenLabs. Check your internet connection." ;;
+        *)   _KEY_ERROR="ElevenLabs returned HTTP $http_code. Try again later." ;;
+    esac
+}
+
+# Prompt for API key with validation. Loops until valid or skipped/cancelled.
+#   $1 = prompt text, $2 = skip button label
+prompt_api_key() {
+    local prompt="$1" skip_btn="$2" key="" err_prefix=""
+    while true; do
+        key=$(osascript -e "text returned of (display dialog \"${err_prefix}${prompt}\" with title \"Speak11\" default answer \"\" with hidden answer buttons {\"${skip_btn}\", \"Install\"} default button \"Install\")" 2>/dev/null || true)
+        [ -z "$key" ] && break  # user clicked Skip/Cancel
+        validate_api_key "$key"
+        if [ -z "$_KEY_ERROR" ]; then
+            API_KEY="$key"
+            return 0
+        fi
+        err_prefix="${_KEY_ERROR}\\n\\n"
+    done
+    return 1  # skipped or cancelled
+}
+
 API_KEY=""
 if [ "$BACKEND_CHOICE" = "Local Only" ]; then
     : # no API key needed
 elif [ "$BACKEND_CHOICE" = "Both" ]; then
-    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:\n\nThe key needs Text-to-Speech and User Read permissions.\n\nSkip to use local TTS only when ElevenLabs is unavailable." with title "Speak11" default answer "" with hidden answer buttons {"Skip", "Install"} default button "Install")' 2>/dev/null || true)
+    prompt_api_key \
+        "Paste your ElevenLabs API key:\\n\\nThe key needs Text-to-Speech and User Read permissions.\\n\\nSkip to use local TTS only when ElevenLabs is unavailable." \
+        "Skip" || true
 else
     # ElevenLabs Only (or Intel — same thing)
-    API_KEY=$(osascript -e 'text returned of (display dialog "Paste your ElevenLabs API key:\n\nThe key needs Text-to-Speech and User Read permissions." with title "Speak11" default answer "" with hidden answer buttons {"Cancel", "Install"} default button "Install")' 2>/dev/null || true)
-    if [ -z "$API_KEY" ]; then
+    if ! prompt_api_key \
+        "Paste your ElevenLabs API key:\\n\\nThe key needs Text-to-Speech and User Read permissions." \
+        "Cancel"; then
         osascript -e 'display dialog "No API key entered. Installation cancelled." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null || true
         exit 1
     fi

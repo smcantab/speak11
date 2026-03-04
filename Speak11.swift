@@ -1176,6 +1176,43 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         showAPIKeyDialog(forBackendSwitch: false)
     }
 
+    /// Validate an API key by calling /v1/user/subscription.
+    /// Returns nil on success, or an error message on failure.
+    private func validateAPIKey(_ key: String) -> String? {
+        guard let url = URL(string: "https://api.elevenlabs.io/v1/user/subscription") else {
+            return "Could not build request URL."
+        }
+        var request = URLRequest(url: url)
+        request.setValue(key, forHTTPHeaderField: "xi-api-key")
+        request.timeoutInterval = 10
+
+        var result: String? = "Could not reach ElevenLabs. Check your internet connection."
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { sem.signal() }
+            if error != nil {
+                result = "Could not reach ElevenLabs. Check your internet connection."
+                return
+            }
+            guard let http = response as? HTTPURLResponse else {
+                result = "Unexpected response from ElevenLabs."
+                return
+            }
+            switch http.statusCode {
+            case 200:
+                result = nil
+            case 401:
+                result = "Invalid API key. Check that you copied the full key."
+            case 403:
+                result = "This key is missing required permissions.\nEnable Text-to-Speech and User Read at elevenlabs.io."
+            default:
+                result = "ElevenLabs returned HTTP \(http.statusCode). Try again later."
+            }
+        }.resume()
+        sem.wait()
+        return result
+    }
+
     @discardableResult
     private func showAPIKeyDialog(forBackendSwitch: Bool, optional: Bool = false) -> Bool {
         NSApp.setActivationPolicy(.regular)
@@ -1183,61 +1220,73 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         NSApp.activate(ignoringOtherApps: true)
         let existingKey = readAPIKey()
 
-        let alert = NSAlert()
+        let skipTitle = optional ? "Skip" : "Cancel"
+        let baseMessage: String
+        let baseInfo: String
         if optional {
-            alert.messageText = "Add ElevenLabs API Key"
-            alert.informativeText = "Add your API key for cloud TTS.\nThe key needs Text-to-Speech and User Read permissions.\n\nWithout a key, Auto mode will use local TTS only."
-            alert.addButton(withTitle: "Save")
-            alert.addButton(withTitle: "Skip")
+            baseMessage = "Add ElevenLabs API Key"
+            baseInfo = "Add your API key for cloud TTS.\nThe key needs Text-to-Speech and User Read permissions.\n\nWithout a key, Auto mode will use local TTS only."
         } else if forBackendSwitch {
-            alert.messageText = "ElevenLabs API Key Required"
-            alert.informativeText = "Enter your ElevenLabs API key to use the cloud backend.\nThe key needs Text-to-Speech and User Read permissions."
-            alert.addButton(withTitle: "Save")
-            alert.addButton(withTitle: "Cancel")
+            baseMessage = "ElevenLabs API Key Required"
+            baseInfo = "Enter your ElevenLabs API key to use the cloud backend.\nThe key needs Text-to-Speech and User Read permissions."
         } else {
-            alert.messageText = "ElevenLabs API Key"
-            alert.informativeText = "Enter or update your ElevenLabs API key.\nThe key needs Text-to-Speech and User Read permissions."
+            baseMessage = "ElevenLabs API Key"
+            baseInfo = "Enter or update your ElevenLabs API key.\nThe key needs Text-to-Speech and User Read permissions."
+        }
+
+        var errorMessage: String? = nil
+
+        while true {
+            let alert = NSAlert()
+            alert.messageText = baseMessage
+            if let err = errorMessage {
+                alert.informativeText = err + "\n\n" + baseInfo
+                alert.icon = NSImage(named: NSImage.cautionName)
+            } else {
+                alert.informativeText = baseInfo
+            }
             alert.addButton(withTitle: "Save")
-            alert.addButton(withTitle: "Cancel")
-            if existingKey != nil {
+            alert.addButton(withTitle: skipTitle)
+            if !forBackendSwitch && !optional && existingKey != nil && errorMessage == nil {
                 alert.addButton(withTitle: "Remove")
             }
-        }
 
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
-        if let key = existingKey {
-            // Mask the key: first 4 + dots + last 4
-            if key.count > 8 {
-                let start = key.prefix(4)
-                let end = key.suffix(4)
-                field.placeholderString = "\(start)\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\(end)"
+            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
+            if errorMessage == nil, let key = existingKey {
+                if key.count > 8 {
+                    let start = key.prefix(4)
+                    let end = key.suffix(4)
+                    field.placeholderString = "\(start)\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\(end)"
+                } else {
+                    field.placeholderString = "Current key set"
+                }
             } else {
-                field.placeholderString = "Current key set"
+                field.placeholderString = "Paste your API key here"
             }
-        } else {
-            field.placeholderString = "Paste your API key here"
-        }
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
+            alert.accessoryView = field
+            alert.window.initialFirstResponder = field
 
-        let response = alert.runModal()
+            let response = alert.runModal()
 
-        if response == .alertFirstButtonReturn {
-            // Save
-            let val = field.stringValue.trimmingCharacters(in: .whitespaces)
-            if !val.isEmpty {
+            if response == .alertFirstButtonReturn {
+                let val = field.stringValue.trimmingCharacters(in: .whitespaces)
+                if val.isEmpty {
+                    if existingKey != nil { return true }
+                    errorMessage = "No key entered."
+                    continue
+                }
+                if let err = validateAPIKey(val) {
+                    errorMessage = err
+                    continue
+                }
                 saveAPIKey(val)
                 return true
+            } else if response == .alertThirdButtonReturn {
+                deleteAPIKey()
+                return false
             }
-            // Empty field with existing key — keep existing
-            return existingKey != nil
-        } else if response == .alertThirdButtonReturn {
-            // Remove
-            deleteAPIKey()
             return false
         }
-        // Cancel
-        return false
     }
 }
 

@@ -4227,6 +4227,28 @@ check "Speak11.swift: custom voice dialog enables paste (regular activation)" \
 check "Speak11.swift: dialogs restore accessory policy via defer" \
     "yes" "$(grep -c 'defer.*setActivationPolicy(.accessory)' "$SCRIPT_DIR/Speak11.swift" | awk '{print ($1 >= 2) ? "yes" : "no"}')"
 
+# API key validation
+check "Speak11.swift: validateAPIKey function exists" \
+    "yes" "$(grep -q 'func validateAPIKey' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "Speak11.swift: validates key via /v1/user/subscription" \
+    "yes" "$(awk '/func validateAPIKey/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'v1/user/subscription' && echo "yes" || echo "no")"
+
+check "Speak11.swift: showAPIKeyDialog calls validateAPIKey" \
+    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'validateAPIKey' && echo "yes" || echo "no")"
+
+check "Speak11.swift: showAPIKeyDialog loops on validation failure" \
+    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'while true' && echo "yes" || echo "no")"
+
+check "install.command: validate_api_key function exists" \
+    "yes" "$(grep -q '^validate_api_key()' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "install.command: validates via /v1/user/subscription" \
+    "yes" "$(grep -q 'v1/user/subscription' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+check "install.command: prompt_api_key loops on failure" \
+    "yes" "$(grep -q 'while true' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
 # ── Text normalization (PDF cleanup) ─────────────────────────────
 
 section "Text normalization (PDF cleanup)"
