@@ -85,9 +85,6 @@ unspin() {
     tput cnorm 2>/dev/null || true
 }
 
-# ── Keep terminal in the background — user interacts via dialogs ──
-$_IS_TERMINAL_APP && osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
-
 # ── Welcome ───────────────────────────────────────────────────────
 result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Copy the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS for free offline use (Apple Silicon)" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null || true)
 [ "$result" = "Quit" ] && exit 0
@@ -157,14 +154,6 @@ fi
 
 # ── Settings app choice (ask before work begins) ─────────────────
 settings_result=$(osascript -e 'button returned of (display dialog "Install the Speak11 app?\n\nAdds a waveform icon to your menu bar to change voice, model, and speed without editing any files." with title "Speak11" buttons {"Skip", "Install"} default button "Install" with icon note)' 2>/dev/null || true)
-
-# ── Show terminal with progress ──────────────────────────────────
-if $_IS_TERMINAL_APP; then
-    osascript -e 'tell application "Terminal"
-        set miniaturized of front window to false
-        activate
-    end tell' 2>/dev/null || true
-fi
 
 header
 

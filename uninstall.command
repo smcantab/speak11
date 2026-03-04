@@ -22,19 +22,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── Keep terminal in the background — user interacts via dialogs ──
-$_IS_TERMINAL_APP && osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null || true
-
 result=$(osascript -e 'button returned of (display dialog "This will completely remove Speak11:\n\n  • Stop and remove the menu bar app\n  • Remove Accessibility permission\n  • Remove the speak script\n  • Remove the Services workflow\n  • Remove settings and config\n  • Remove the local TTS environment\n  • Remove the API key from Keychain\n  • Remove the login item (if set)" with title "Speak11" buttons {"Cancel", "Uninstall"} default button "Cancel" with icon caution)' 2>/dev/null || true)
 [ "$result" = "Uninstall" ] || exit 0
-
-# ── Show terminal with progress ──────────────────────────────────
-if $_IS_TERMINAL_APP; then
-    osascript -e 'tell application "Terminal"
-        set miniaturized of front window to false
-        activate
-    end tell' 2>/dev/null || true
-fi
 
 printf '\033[2J\033[H'
 printf '\n'
