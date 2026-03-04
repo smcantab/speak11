@@ -107,6 +107,65 @@ fi
 # Strip invalid Unicode (unpaired surrogates from PDFs, etc.)
 TEXT=$(printf '%s' "$TEXT" | iconv -f UTF-8 -t UTF-8//IGNORE)
 
+# ── Normalize clipboard text (PDF artifacts, whitespace, etc.) ────
+normalize_text() {
+    local py="${VENV_PYTHON:-python3}"
+    [ -x "$py" ] 2>/dev/null || py=python3
+    local result
+    if command -v "$py" >/dev/null 2>&1 && \
+       result=$(printf '%s' "$1" | "$py" -c "
+import re, sys
+t = sys.stdin.read()
+# 1. Normalize line endings (Windows CRLF -> LF, stray CR -> LF)
+t = t.replace('\r\n', '\n').replace('\r', '\n')
+# 2. Strip zero-width characters (U+200B, U+200C, U+200D, U+FEFF)
+t = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', t)
+# 3. Non-breaking space to regular space
+t = t.replace('\u00a0', ' ')
+# 4. Strip trailing whitespace on each line
+t = re.sub(r'[ \t]+$', '', t, flags=re.MULTILINE)
+# 5. Rejoin hyphenated word splits (hyphen at end of line)
+t = re.sub(r'(\w)-\n(\w)', r'\1\2', t)
+# 6. Protect paragraph breaks (2+ newlines) with placeholder
+t = re.sub(r'\n{2,}', '\x00', t)
+# 7. Rejoin mid-sentence line breaks (not after sentence-ending punct)
+t = re.sub(r'(?<![.!?:\x22\x27])\n', ' ', t)
+# 8. Restore paragraph breaks
+t = t.replace('\x00', '\n\n')
+# 9. Collapse multiple spaces to one
+t = re.sub(r' {2,}', ' ', t)
+# 10. Collapse repeated punctuation (... -> ..., ??? -> ?, !!! -> !)
+t = re.sub(r'\.{4,}', '...', t)
+t = re.sub(r'\?{2,}', '?', t)
+t = re.sub(r'!{2,}', '!', t)
+# 11. Normalize dashes (-- or --- to spaced dash)
+t = re.sub(r' ?-{2,3} ?', ' -- ', t)
+# 12. Strip footnote markers: superscript digits and [N] references
+t = re.sub(r'[\xb9\xb2\xb3\u2074-\u2079\u2070\u00b9]+', '', t)
+t = re.sub(r'\s*\[\d+(?:,\s*\d+)*\]\s*', ' ', t)
+# 13. Strip bullet/list markers at start of lines
+t = re.sub(r'^[\u2022\u2023\u25e6\u2043\u2219] +', '', t, flags=re.MULTILINE)
+t = re.sub(r'^- +', '', t, flags=re.MULTILINE)
+t = re.sub(r'^\d+[.)]\s+', '', t, flags=re.MULTILINE)
+# 14. Roman numerals after labels
+_R = {'I':'1','II':'2','III':'3','IV':'4','V':'5','VI':'6','VII':'7',
+      'VIII':'8','IX':'9','X':'10','XI':'11','XII':'12','XIII':'13',
+      'XIV':'14','XV':'15','XVI':'16','XVII':'17','XVIII':'18','XIX':'19','XX':'20'}
+t = re.sub(
+    r'\b(Section|Chapter|Part|Article|Item|Figure|Table|Act|Vol|No)(\s+)((?:X{0,3})(?:IX|IV|V?I{0,3}))\b',
+    lambda m: m.group(1)+m.group(2)+_R.get(m.group(3),m.group(3)), t)
+# 15. Collapse any remaining multiple spaces from prior steps
+t = re.sub(r' {2,}', ' ', t)
+sys.stdout.write(t)
+" 2>/dev/null); then
+        printf '%s' "$result"
+    else
+        # Python unavailable — bash-only fallback: rejoin hyphenated line-end splits
+        printf '%s' "$1" | sed -e '/-$/{' -e 'N' -e 's/-\n//' -e '}'
+    fi
+}
+TEXT=$(normalize_text "$TEXT")
+
 # ── Mute check ────────────────────────────────────────────────────
 # When launched from Speak11.app, the mute check is done in-process via
 # CoreAudio (microseconds). SPEAK11_MUTE_CHECKED=1 signals this.

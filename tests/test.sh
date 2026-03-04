@@ -4217,6 +4217,180 @@ check "Speak11.swift: passes SPEAK11_MUTE_CHECKED to speak.sh" \
 check "speak.sh: skips mute check when SPEAK11_MUTE_CHECKED=1" \
     "yes" "$(grep -q 'SPEAK11_MUTE_CHECKED' "$SPEAK_SH" && echo "yes" || echo "no")"
 
+# ── Text normalization (PDF cleanup) ─────────────────────────────
+
+section "Text normalization (PDF cleanup)"
+
+# Source normalize_text from speak.sh
+eval "$(awk '/^normalize_text\(\)/,/^}/' "$SPEAK_SH")" 2>/dev/null || true
+
+if type normalize_text &>/dev/null; then
+    # Hyphenation
+    check "normalize: rejoin hyphenated word split" \
+        "information" "$(normalize_text $'infor-\nmation')"
+
+    check "normalize: hyphenation mid-sentence" \
+        "end-of-line hyphenation works" "$(normalize_text $'end-of-line hy-\nphenation works')"
+
+    # Line break rejoining
+    check "normalize: rejoin mid-sentence line break" \
+        "The quick brown fox jumped." "$(normalize_text $'The quick brown\nfox jumped.')"
+
+    check "normalize: preserve break after period" \
+        $'First sentence.\nSecond sentence.' "$(normalize_text $'First sentence.\nSecond sentence.')"
+
+    check "normalize: preserve paragraph breaks (double newline)" \
+        $'Paragraph one.\n\nParagraph two.' "$(normalize_text $'Paragraph one.\n\nParagraph two.')"
+
+    check "normalize: preserve break after question mark" \
+        $'He asked a question?\nThen left.' "$(normalize_text $'He asked a question?\nThen left.')"
+
+    check "normalize: preserve break after exclamation" \
+        $'Stop!\nDon'"'"'t move.' "$(normalize_text $'Stop!\nDon\'t move.')"
+
+    check "normalize: preserve break after colon" \
+        $'Note:\nThis is important.' "$(normalize_text $'Note:\nThis is important.')"
+
+    # Roman numerals
+    check "normalize: Section I -> Section 1" \
+        "Section 1" "$(normalize_text "Section I")"
+
+    check "normalize: Chapter IV -> Chapter 4" \
+        "Chapter 4" "$(normalize_text "Chapter IV")"
+
+    check "normalize: Part III of -> Part 3 of" \
+        "Part 3 of" "$(normalize_text "Part III of")"
+
+    check "normalize: standalone I unchanged (no label)" \
+        "I went home" "$(normalize_text "I went home")"
+
+    check "normalize: Section XIV -> Section 14" \
+        "Section 14" "$(normalize_text "Section XIV")"
+
+    check "normalize: Figure VII -> Figure 7" \
+        "Figure 7" "$(normalize_text "Figure VII")"
+
+    # Whitespace normalization
+    check "normalize: collapse multiple spaces" \
+        "Hello world." "$(normalize_text "Hello    world.")"
+
+    check "normalize: strip zero-width spaces (U+200B)" \
+        "Helloworld" "$(normalize_text $'Hello\xe2\x80\x8bworld')"
+
+    check "normalize: non-breaking space to regular space" \
+        "Hello world" "$(normalize_text $'Hello\xc2\xa0world')"
+
+    check "normalize: strip trailing whitespace on lines" \
+        $'Hello.\nWorld.' "$(normalize_text $'Hello.   \nWorld.')"
+
+    # Punctuation collapse
+    check "normalize: collapse ellipsis (many dots)" \
+        "Wait... what" "$(normalize_text "Wait...... what")"
+
+    check "normalize: three-dot ellipsis preserved" \
+        "Wait... what" "$(normalize_text "Wait... what")"
+
+    check "normalize: collapse repeated question marks" \
+        "Really?" "$(normalize_text "Really???")"
+
+    check "normalize: collapse repeated exclamation" \
+        "Wow!" "$(normalize_text "Wow!!!")"
+
+    check "normalize: em dash from triple hyphen" \
+        "word -- word" "$(normalize_text "word --- word")"
+
+    check "normalize: em dash from double hyphen" \
+        "word -- word" "$(normalize_text "word -- word")"
+
+    # Footnote markers
+    check "normalize: strip superscript digits" \
+        "the study found" "$(normalize_text $'the study\xc2\xb9 found')"
+
+    check "normalize: strip bracketed reference numbers" \
+        "the study found" "$(normalize_text "the study [1] found")"
+
+    check "normalize: strip bracketed multi-ref" \
+        "as shown previously" "$(normalize_text "as shown [2,3] previously")"
+
+    # Bullet/list markers
+    check "normalize: strip bullet character" \
+        "First item" "$(normalize_text $'\xe2\x80\xa2 First item')"
+
+    check "normalize: strip dash list marker" \
+        "First item" "$(normalize_text "- First item")"
+
+    check "normalize: strip numbered list marker" \
+        "First item" "$(normalize_text "1. First item")"
+
+    check "normalize: strip numbered list with paren" \
+        "First item" "$(normalize_text "1) First item")"
+
+    # Passthrough
+    check "normalize: plain text unchanged" \
+        "Hello world." "$(normalize_text "Hello world.")"
+
+    # Windows line endings (CRLF)
+    check "normalize: CRLF converted to LF then joined" \
+        "Hello world" "$(normalize_text $'Hello\r\nworld')"
+
+    check "normalize: stray CR converted to LF" \
+        "Hello world" "$(normalize_text $'Hello\rworld')"
+
+    # Closing quote after period preserves break
+    check "normalize: break after closing-quote+period" \
+        $'She said "hello."\nThen left.' "$(normalize_text $'She said "hello."\nThen left.')"
+
+    # Semicolon does NOT preserve break (not sentence-ending)
+    check "normalize: semicolon line joined" \
+        "first clause; second clause" "$(normalize_text $'first clause;\nsecond clause')"
+
+    # Hyphenated compound words mid-line are NOT altered
+    check "normalize: compound hyphen mid-line preserved" \
+        "state-of-the-art method" "$(normalize_text "state-of-the-art method")"
+
+    # Negative number not stripped as list marker
+    check "normalize: negative number preserved" \
+        "temperature was -5 degrees" "$(normalize_text "temperature was -5 degrees")"
+
+    # Decimal number not stripped as list marker
+    check "normalize: decimal number preserved" \
+        "measured 3.5 kg" "$(normalize_text "measured 3.5 kg")"
+
+    # Realistic PDF paragraph (combined artifacts)
+    _PDF_INPUT=$'The infor-\nmation was presented in\nSection III of the docu-\nment. The results were\nstatistically significant.\n\nDr. Smith noted that the\ndata supports the hypothesis.'
+    _PDF_EXPECT=$'The information was presented in Section 3 of the document. The results were statistically significant.\n\nDr. Smith noted that the data supports the hypothesis.'
+    check "normalize: realistic PDF paragraph" \
+        "$_PDF_EXPECT" "$(normalize_text "$_PDF_INPUT")"
+else
+    check "normalize: function not found" "yes" "no"
+fi
+
+# Bash-only fallback: sed handles hyphen-newline when python3 is unavailable
+# Source the function first, then call it with python3 removed from PATH
+_NORM_FUNC=$(awk '/^normalize_text\(\)/,/^}/' "$SPEAK_SH")
+_FSTUBS=$(mktemp -d)
+ln -s /usr/bin/sed "$_FSTUBS/sed" 2>/dev/null || true
+ln -s /usr/bin/printf "$_FSTUBS/printf" 2>/dev/null || true
+_FALLBACK_RESULT=$(
+    eval "$_NORM_FUNC" 2>/dev/null || true
+    VENV_PYTHON=/dev/null/no_python
+    PATH="$_FSTUBS"
+    normalize_text $'infor-\nmation'
+)
+rm -rf "$_FSTUBS"
+check "normalize: bash sed fallback rejoins hyphenated words" \
+    "information" "$_FALLBACK_RESULT"
+
+# Structural checks
+check "speak.sh: normalize_text function defined" \
+    "yes" "$(grep -q '^normalize_text()' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: normalize_text called after iconv" \
+    "yes" "$(grep -q 'normalize_text' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: sed fallback for missing python" \
+    "yes" "$(grep -q 'sed.*/-\$/' "$SPEAK_SH" && echo "yes" || echo "no")"
+
 # ── Summary ──────────────────────────────────────────────────────
 
 printf "\n────────────────────────────────────────────\n"
