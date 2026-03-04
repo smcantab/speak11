@@ -107,60 +107,150 @@ fi
 # Strip invalid Unicode (unpaired surrogates from PDFs, etc.)
 TEXT=$(printf '%s' "$TEXT" | iconv -f UTF-8 -t UTF-8//IGNORE)
 
-# ── Normalize clipboard text (PDF artifacts, whitespace, etc.) ────
+# ── Normalize clipboard/PDF text for TTS ──────────────────────────
+# Cleans artifacts from PDF copy-paste so TTS engines read text naturally.
+# Single python call (~30ms); falls back to bash sed if python is absent.
 normalize_text() {
     local py="${VENV_PYTHON:-python3}"
     [ -x "$py" ] 2>/dev/null || py=python3
     local result
     if command -v "$py" >/dev/null 2>&1 && \
        result=$(printf '%s' "$1" | "$py" -c "
-import re, sys
+import re, sys, unicodedata as _ud
+
 t = sys.stdin.read()
-# 1. Normalize line endings (Windows CRLF -> LF, stray CR -> LF)
+
+# ── Phase 1: Encoding and character normalization ─────────────
+# Fix mojibake (UTF-8 bytes misread as Latin-1/Windows-1252).
+try:
+    import ftfy
+    t = ftfy.fix_text(t)
+except ImportError:
+    pass
+# Line endings: CRLF and stray CR to LF.
 t = t.replace('\r\n', '\n').replace('\r', '\n')
-# 2. Strip zero-width characters (U+200B, U+200C, U+200D, U+FEFF)
-t = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', t)
-# 3. Non-breaking space to regular space
-t = t.replace('\u00a0', ' ')
-# 4. Strip trailing whitespace on each line
+# Invisible characters: zero-width, soft hyphens, PUA (math font garbage).
+t = re.sub(r'[\u200b\u200c\u200d\ufeff\u00ad]', '', t)
+t = re.sub(r'[\ue000-\uf8ff]', '', t)
+# Ligatures from PDF fonts: ffi/ffl before fi/fl to avoid partial match.
+t = t.replace('\ufb00','ff').replace('\ufb03','ffi').replace('\ufb04','ffl')
+t = t.replace('\ufb01','fi').replace('\ufb02','fl')
+# Typographic characters to ASCII equivalents.
+t = t.replace('\u2212', '-')                            # minus sign
+t = t.replace('\u2026', '...')                          # ellipsis
+t = t.replace('\u201c','\x22').replace('\u201d','\x22') # smart double quotes
+t = t.replace('\u2018','\x27').replace('\u2019','\x27') # smart single quotes
+t = t.replace('\u00b7', ' ')                            # middle dot (kg-m)
+t = t.replace('\u2032','\x27').replace('\u2033','\x22') # prime / double prime
+# Exotic whitespace to regular space.
+t = re.sub(r'[\u00a0\u2007\u2009\u200a\u202f\u205f]', ' ', t)
+# Unicode subscript digits to regular digits (chemistry: H₂O -> H2O).
+t = re.sub(r'[\u2080-\u2089]', lambda m: chr(ord(m.group())-0x2050), t)
+# Strip trailing whitespace on each line.
 t = re.sub(r'[ \t]+$', '', t, flags=re.MULTILINE)
-# 5. Rejoin hyphenated word splits (hyphen at end of line)
+
+# ── Phase 2: Line and paragraph structure ─────────────────────
+# Rejoin hyphenated word splits at line ends.
 t = re.sub(r'(\w)-\n(\w)', r'\1\2', t)
-# 6. Protect paragraph breaks (2+ newlines) with placeholder
+# Protect paragraph breaks (2+ newlines), rejoin the rest.
 t = re.sub(r'\n{2,}', '\x00', t)
-# 7. Rejoin mid-sentence line breaks (not after sentence-ending punct)
 t = re.sub(r'(?<![.!?:\x22\x27])\n', ' ', t)
-# 8. Restore paragraph breaks
 t = t.replace('\x00', '\n\n')
-# 9. Collapse multiple spaces to one
-t = re.sub(r' {2,}', ' ', t)
-# 10. Collapse repeated punctuation (... -> ..., ??? -> ?, !!! -> !)
-t = re.sub(r'\.{4,}', '...', t)
-t = re.sub(r'\?{2,}', '?', t)
-t = re.sub(r'!{2,}', '!', t)
-# 11. Normalize dashes (-- or --- to spaced dash)
-t = re.sub(r' ?-{2,3} ?', ' -- ', t)
-# 12. Strip footnote markers: superscript digits and [N] references
+
+# ── Phase 3: Noise removal ────────────────────────────────────
+# URLs and DOIs.
+t = re.sub(r'https?://\S+', '', t)
+t = re.sub(r'(?i)\bdoi:\s*\S+', '', t)
+# Citation references (scientific papers).
+# Bare citations glued to words: impacts1-8, results1,2,3, shown1.
+t = re.sub(r'(?<=[a-z])\d+(?:\s*[,\u2013\u2014-]\s*\d+)*(?=[\s.,;:?!\x27\x22)\]]|$)', '', t)
+# Citations after abbreviation period: et al.1-8.
+t = re.sub(r'(?<=et al\.)\d+(?:\s*[,\u2013\u2014-]\s*\d+)*', '', t)
+# Bracketed refs: [1], [1,2,3], [1-8].
+t = re.sub(r'\s*\[\d+(?:\s*[,;\u2013\u2014-]\s*\d+)*\]\s*', ' ', t)
+# Parenthetical author-year: (Smith et al., 2020), (Smith 2020; Jones 2021).
+t = re.sub(r'\s*\((?:[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+[A-Z][a-z]+))?(?:,?\s*\d{4})\s*(?:;\s*[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+[A-Z][a-z]+))?(?:,?\s*\d{4})\s*)*)\)\s*', ' ', t)
+# Superscript minus+digit (Å⁻¹ -> inverse; before superscript stripping).
+t = re.sub(r'\u207b[\xb9\xb2\xb3\u2074-\u2079\u2070]+', lambda m: ' inverse' if m.start()>0 else 'inverse', t)
+# Remaining superscript digits.
 t = re.sub(r'[\xb9\xb2\xb3\u2074-\u2079\u2070\u00b9]+', '', t)
-t = re.sub(r'\s*\[\d+(?:,\s*\d+)*\]\s*', ' ', t)
-# 13. Strip bullet/list markers at start of lines
+# Bullet and list markers at line start.
 t = re.sub(r'^[\u2022\u2023\u25e6\u2043\u2219] +', '', t, flags=re.MULTILINE)
 t = re.sub(r'^- +', '', t, flags=re.MULTILINE)
 t = re.sub(r'^\d+[.)]\s+', '', t, flags=re.MULTILINE)
-# 14. Roman numerals after labels
-_R = {'I':'1','II':'2','III':'3','IV':'4','V':'5','VI':'6','VII':'7',
-      'VIII':'8','IX':'9','X':'10','XI':'11','XII':'12','XIII':'13',
-      'XIV':'14','XV':'15','XVI':'16','XVII':'17','XVIII':'18','XIX':'19','XX':'20'}
+
+# ── Phase 4: Dash and punctuation normalization ───────────────
+t = re.sub(r' ?[\u2014\u2013] ?', ' -- ', t)  # em/en-dash
+t = re.sub(r' ?-{2,3} ?', ' -- ', t)           # ASCII double/triple dash
+t = re.sub(r'\.{4,}', '...', t)                # excessive dots
+t = re.sub(r'\?{2,}', '?', t)
+t = re.sub(r'!{2,}', '!', t)
+
+# ── Phase 5: Scientific symbols and units ─────────────────────
+# Single-character symbols to spoken form.
+_SYM = {
+  '\u00c5':' angstroms ', '\u212b':' angstroms ',
+  '\u00b1':' plus or minus ', '\u00d7':' times ',
+  '\u2248':' approximately ',
+  '\u2264':' less than or equal to ','\u2265':' greater than or equal to ',
+  '\u221e':' infinity ', '\u221a':' square root of ',
+  '\u2192':' to ', '\u2190':' from ', '\u2194':' to and from ',
+  '\u21cc':' is in equilibrium with ',
+  '\u2260':' not equal to ', '\u2261':' equivalent to ',
+  '\u221d':' proportional to ',
+  '\u2202':' partial ', '\u2211':' sum of ', '\u220f':' product of ',
+  '\u222b':' integral of ', '\u2207':' del ', '\u2205':' empty set ',
+  '\u2103':' degrees Celsius ', '\u2109':' degrees Fahrenheit ',
+  '\u210f':' h-bar ', '\u2113':' liters ', '\u2030':' per mille ',
+  '\u2220':' angle ', '\u2225':' parallel to ',
+  '\u22a5':' perpendicular to ',
+  '\u27e8':'', '\u27e9':''}  # mathematical angle brackets (Dirac bra-ket)
+for _s,_w in _SYM.items():
+    t = t.replace(_s, _w)
+# Degree+letter units (must precede bare degree).
+t = re.sub(r'\u00b0C\b', 'degrees Celsius', t)
+t = re.sub(r'\u00b0F\b', 'degrees Fahrenheit', t)
+t = re.sub(r'\u00b0K\b', 'degrees Kelvin', t)
+t = re.sub(r'(?<=\d)\u00b0(?=\s|$|[.,;:?!])', ' degrees', t)
+# Micro prefix (µ followed by unit letter).
+_UUNIT = {'m':'meters','L':'liters','l':'liters','g':'grams','s':'seconds',
+  'A':'amperes','V':'volts','W':'watts','F':'farads','H':'henrys','S':'siemens',
+  'T':'teslas','Pa':'pascals','J':'joules','N':'newtons','K':'kelvins',
+  'mol':'moles','Hz':'hertz','Ohm':'ohms','\u03a9':'ohms','M':'molar'}
+for _u,_w in sorted(_UUNIT.items(), key=lambda x: -len(x[0])):
+    t = t.replace('\u00b5'+_u, 'micro'+_w)
+if '\u00b5' in t:
+    t = re.sub(r'\u00b5(\w)', r'micro-\1', t)
+# Ohm: number + Ω (ftfy normalizes U+2126 to Greek omega).
+t = re.sub(r'(?<=\d)\s*[\u2126\u03a9](?=\s|$|[.,;:?!)])', ' ohms', t)
+# Greek letters via unicodedata (all 24, upper and lower).
+_GREEK_FIX = {'lamda':'lambda'}
+def _greek(m):
+    c = m.group(0)
+    n = _ud.name(c, '')
+    if 'GREEK' in n and 'LETTER' in n:
+        w = n.split()[-1].lower()
+        return ' ' + _GREEK_FIX.get(w, w) + ' '
+    return c
+t = re.sub(r'[\u0391-\u03c9]', _greek, t)
+# Roman numerals after labels (Section III -> Section 3).
+_R = {r: str(i) for i, r in enumerate(
+    ['','I','II','III','IV','V','VI','VII','VIII','IX','X',
+     'XI','XII','XIII','XIV','XV','XVI','XVII','XVIII','XIX','XX'], 0) if r}
 t = re.sub(
     r'\b(Section|Chapter|Part|Article|Item|Figure|Table|Act|Vol|No)(\s+)((?:X{0,3})(?:IX|IV|V?I{0,3}))\b',
     lambda m: m.group(1)+m.group(2)+_R.get(m.group(3),m.group(3)), t)
-# 15. Collapse any remaining multiple spaces from prior steps
-t = re.sub(r' {2,}', ' ', t)
+
+# ── Phase 6: Final cleanup ────────────────────────────────────
+t = re.sub(r' {2,}', ' ', t)                    # collapse multiple spaces
+t = re.sub(r' +([.,;:?!)\]])', r'\1', t)        # space before punctuation
+t = re.sub(r'([\(\[]) +', r'\1', t)             # space after opening bracket
+t = t.strip()
 sys.stdout.write(t)
 " 2>/dev/null); then
         printf '%s' "$result"
     else
-        # Python unavailable — bash-only fallback: rejoin hyphenated line-end splits
+        # Python unavailable -- bash-only fallback: rejoin hyphenated line-end splits
         printf '%s' "$1" | sed -e '/-$/{' -e 'N' -e 's/-\n//' -e '}'
     fi
 }

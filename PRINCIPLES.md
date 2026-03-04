@@ -555,16 +555,33 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
     The `/latest/` URL auto-resolves to the newest release.
 
 25. **Text normalization runs before TTS.** `normalize_text()` in speak.sh
-    preprocesses clipboard/PDF text via a 15-step Python pipeline (with a
-    bash `sed` fallback for hyphen rejoining only). Steps: CRLF normalization,
-    zero-width character stripping, non-breaking space replacement, trailing
-    whitespace removal, hyphenated word rejoining, paragraph break protection
-    (placeholder swap), mid-sentence line break rejoining, paragraph restore,
-    space collapsing, repeated punctuation collapsing, dash normalization,
-    footnote marker stripping, bullet/list marker stripping, Roman numeral
-    conversion after labels (Section, Chapter, etc.), final space collapse.
-    Uses `printf '%s'` pipe (not `<<<`) to avoid trailing newline. Paragraph
-    breaks (`\n\n`) are protected with `\x00` placeholder before line joining.
+    preprocesses clipboard/PDF text via a single Python call organized in 6
+    phases (with a bash `sed` fallback for hyphen rejoining only):
+    **Phase 1 -- Encoding/character normalization:** ftfy mojibake fix, CRLF,
+    zero-width/PUA/soft-hyphen stripping, ligature decomposition (fi/fl/ff/ffi/ffl),
+    Unicode minus/ellipsis/smart quotes/middle dot/prime, subscript digits
+    (U+2080-2089 for chemistry: H₂O), thin/hair/figure/NBSP to regular space.
+    **Phase 2 -- Line/paragraph structure:** hyphenated word rejoining across
+    line breaks, paragraph-aware line joining (double-newline preserved via
+    `\x00` placeholder, breaks after `.!?:"'` preserved).
+    **Phase 3 -- Noise removal:** URL/DOI stripping, citation stripping (bare
+    `impacts1-8` requires lowercase lookbehind `(?<=[a-z])` to avoid eating
+    chemistry formulas like CO2; separate regex for `et al.` period; bracketed
+    `[1,3]`; author-year `(Smith 2020)`), superscript inverse (⁻¹ to
+    " inverse"), superscript digit stripping, bullet/list marker removal.
+    **Phase 4 -- Dash/punctuation:** em/en-dash to ` -- `, repeated
+    punctuation collapsing.
+    **Phase 5 -- Scientific symbols/units:** curated symbol dict (Å, ±, ×,
+    ≈, ≤, ≥, ∞, √, →, ⇌, ∂, ∑, ∏, ∫, ∇, ℃, ℉, ℏ, ℓ, ‰, ⟨⟩, etc.),
+    degree symbol context (°C/°F/°K/bare°), micro-prefix units (µm, µg, µM,
+    etc.), ohm after digits (Ω), Greek letters via `unicodedata` (with
+    lambda spelling fix), Roman numerals after labels (Section IV to Section 4).
+    **Phase 6 -- Final cleanup:** multi-space collapsing, space-before-punctuation
+    removal, space-after-opening-bracket removal.
+    Uses `printf '%s'` pipe (not `<<<`) to avoid trailing newline. ftfy
+    requires pip install in the venv; the pipeline gracefully skips it if
+    unavailable. Do not duplicate features already handled natively by TTS
+    engines (e.g., ASCII abbreviations like km, eV, DNA).
 
 26. **API key is validated on entry.** Both `install.command` and
     `Speak11Settings.swift` validate the API key by calling

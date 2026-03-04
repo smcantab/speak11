@@ -4281,7 +4281,8 @@ check "install.command: prompt_api_key loops on failure" \
 
 section "Text normalization (PDF cleanup)"
 
-# Source normalize_text from speak.sh
+# Source normalize_text from speak.sh; use venv python for ftfy support
+VENV_PYTHON="${VENV_PYTHON:-$HOME/.local/share/speak11/venv/bin/python3}"
 eval "$(awk '/^normalize_text\(\)/,/^}/' "$SPEAK_SH")" 2>/dev/null || true
 
 if type normalize_text &>/dev/null; then
@@ -4372,6 +4373,231 @@ if type normalize_text &>/dev/null; then
     check "normalize: strip bracketed multi-ref" \
         "as shown previously" "$(normalize_text "as shown [2,3] previously")"
 
+    # Scientific citation references (PDF copy flattens superscripts to plain digits)
+    check "normalize: bare citation range with en-dash" \
+        "meteorite impacts." "$(normalize_text "meteorite impacts1–8.")"
+
+    check "normalize: bare citation range with hyphen" \
+        "meteorite impacts." "$(normalize_text "meteorite impacts1-8.")"
+
+    check "normalize: bare single citation" \
+        "was shown previously" "$(normalize_text "was shown previously1")"
+
+    check "normalize: bare citation comma list" \
+        "the results were" "$(normalize_text "the results1,2,3 were")"
+
+    check "normalize: bare citation comma+range" \
+        "the results were" "$(normalize_text "the results1,3-5 were")"
+
+    check "normalize: bracketed range with en-dash" \
+        "the results were" "$(normalize_text "the results [1–8] were")"
+
+    check "normalize: bracketed range with hyphen" \
+        "the results were" "$(normalize_text "the results [1-8] were")"
+
+    check "normalize: parenthetical author-year" \
+        "the results were significant." "$(normalize_text "the results (Smith et al., 2020) were significant.")"
+
+    check "normalize: parenthetical multi author-year" \
+        "as shown before." "$(normalize_text "as shown (Smith 2020; Jones 2021) before.")"
+
+    check "normalize: bare citation does not eat real numbers" \
+        "measured 42 samples" "$(normalize_text "measured 42 samples")"
+
+    check "normalize: year in text not stripped" \
+        "In 2020 we found" "$(normalize_text "In 2020 we found")"
+
+    check "normalize: real-world scientific sentence" \
+        "Known as the 'ultimate semiconductor', cubic diamond has gained substantial interest both scientifically and industrially. Its polymorph, hexagonal diamond, is even more intriguing because of its fascinating properties associated with the meteorite impacts." \
+        "$(normalize_text "Known as the 'ultimate semiconductor', cubic diamond has gained substantial interest both scientifically and industrially. Its polymorph, hexagonal diamond, is even more intriguing because of its fascinating properties associated with the meteorite impacts1–8.")"
+
+    # Scientific symbols and units
+    check "normalize: angstrom symbol" \
+        "2.5 angstroms" "$(normalize_text $'2.5 \xc3\x85')"
+
+    check "normalize: angstrom in context" \
+        "bond length of 1.54 angstroms was" "$(normalize_text $'bond length of 1.54 \xc3\x85 was')"
+
+    check "normalize: degree celsius" \
+        "heated to 500 degrees Celsius" "$(normalize_text $'heated to 500 \xc2\xb0C')"
+
+    check "normalize: degree fahrenheit" \
+        "at 72 degrees Fahrenheit" "$(normalize_text $'at 72 \xc2\xb0F')"
+
+    check "normalize: bare degree symbol" \
+        "rotated 90 degrees" "$(normalize_text $'rotated 90\xc2\xb0')"
+
+    check "normalize: plus-minus" \
+        "3.5 plus or minus 0.2" "$(normalize_text $'3.5 \xc2\xb1 0.2')"
+
+    check "normalize: multiplication sign" \
+        "2 times 10" "$(normalize_text $'2 \xc3\x97 10')"
+
+    check "normalize: approximately equal" \
+        "approximately 3.14" "$(normalize_text $'\xe2\x89\x88 3.14')"
+
+    check "normalize: less than or equal" \
+        "x less than or equal to 5" "$(normalize_text $'x \xe2\x89\xa4 5')"
+
+    check "normalize: greater than or equal" \
+        "x greater than or equal to 5" "$(normalize_text $'x \xe2\x89\xa5 5')"
+
+    check "normalize: micro prefix" \
+        "50 micrometers" "$(normalize_text $'50 \xc2\xb5m')"
+
+    check "normalize: micro alone" \
+        "50 microseconds" "$(normalize_text $'50 \xc2\xb5s')"
+
+    # Greek letters
+    check "normalize: alpha" \
+        "the alpha phase" "$(normalize_text $'the \xce\xb1 phase')"
+
+    check "normalize: beta" \
+        "beta decay" "$(normalize_text $'\xce\xb2 decay')"
+
+    check "normalize: gamma" \
+        "gamma rays" "$(normalize_text $'\xce\xb3 rays')"
+
+    check "normalize: delta" \
+        "delta function" "$(normalize_text $'\xce\xb4 function')"
+
+    check "normalize: theta" \
+        "angle theta" "$(normalize_text $'angle \xce\xb8')"
+
+    check "normalize: lambda" \
+        "wavelength lambda" "$(normalize_text $'wavelength \xce\xbb')"
+
+    check "normalize: pi" \
+        "pi radians" "$(normalize_text $'\xcf\x80 radians')"
+
+    check "normalize: sigma" \
+        "sigma bond" "$(normalize_text $'\xcf\x83 bond')"
+
+    check "normalize: uppercase sigma" \
+        "sigma notation" "$(normalize_text $'\xce\xa3 notation')"
+
+    check "normalize: infinity" \
+        "to infinity" "$(normalize_text $'to \xe2\x88\x9e')"
+
+    check "normalize: rightward arrow" \
+        "A to B" "$(normalize_text $'A \xe2\x86\x92 B')"
+
+    check "normalize: leftward arrow" \
+        "A from B" "$(normalize_text $'A \xe2\x86\x90 B')"
+
+    check "normalize: bidirectional arrow" \
+        "A to and from B" "$(normalize_text $'A \xe2\x86\x94 B')"
+
+    # Common unit abbreviations that TTS may mangle
+    check "normalize: micro-liter" \
+        "50 microliters" "$(normalize_text $'50 \xc2\xb5L')"
+
+    check "normalize: angstrom-1 (inverse)" \
+        "5 angstroms inverse" "$(normalize_text $'5 \xc3\x85\xe2\x81\xbb\xc2\xb9')"
+
+    # Unicode single-character unit symbols
+    check "normalize: single-char degree celsius" \
+        "at 500 degrees Celsius" "$(normalize_text $'at 500 \xe2\x84\x83')"
+
+    check "normalize: single-char degree fahrenheit" \
+        "at 72 degrees Fahrenheit" "$(normalize_text $'at 72 \xe2\x84\x89')"
+
+    check "normalize: ohm sign" \
+        "50 ohms" "$(normalize_text $'50 \xe2\x84\xa6')"
+
+    check "normalize: h-bar" \
+        "h-bar over 2" "$(normalize_text $'\xe2\x84\x8f over 2')"
+
+    check "normalize: script l (liter)" \
+        "5 liters" "$(normalize_text $'5 \xe2\x84\x93')"
+
+    check "normalize: per mille" \
+        "0.5 per mille" "$(normalize_text $'0.5 \xe2\x80\xb0')"
+
+    check "normalize: angle sign" \
+        "angle ABC" "$(normalize_text $'\xe2\x88\xa0 ABC')"
+
+    check "normalize: parallel to" \
+        "AB parallel to CD" "$(normalize_text $'AB \xe2\x88\xa5 CD')"
+
+    check "normalize: perpendicular to" \
+        "AB perpendicular to CD" "$(normalize_text $'AB \xe2\x8a\xa5 CD')"
+
+    check "normalize: prime to apostrophe" \
+        "5'" "$(normalize_text $'5\xe2\x80\xb2')"
+
+    check "normalize: double prime to quote" \
+        "5\"" "$(normalize_text $'5\xe2\x80\xb3')"
+
+    # Ligatures (PDF copy artifacts)
+    check "normalize: fi ligature" \
+        "find" "$(normalize_text $'\xef\xac\x81nd')"
+
+    check "normalize: fl ligature" \
+        "flow" "$(normalize_text $'\xef\xac\x82ow')"
+
+    check "normalize: ffi ligature" \
+        "office" "$(normalize_text $'o\xef\xac\x83ce')"
+
+    check "normalize: ffl ligature" \
+        "waffle" "$(normalize_text $'wa\xef\xac\x84e')"
+
+    check "normalize: ff ligature" \
+        "effect" "$(normalize_text $'e\xef\xac\x80ect')"
+
+    # Soft hyphen (invisible, causes TTS pause)
+    check "normalize: soft hyphen stripped" \
+        "information" "$(normalize_text $'infor\xc2\xadmation')"
+
+    # Unicode minus sign
+    check "normalize: unicode minus to hyphen" \
+        "temperature was -5 degrees" "$(normalize_text $'temperature was \xe2\x88\x925 degrees')"
+
+    # Thin/hair/figure spaces
+    check "normalize: thin space to regular" \
+        "25 kg" "$(normalize_text $'25\xe2\x80\x89kg')"
+
+    check "normalize: hair space to regular" \
+        "25 kg" "$(normalize_text $'25\xe2\x80\x8akg')"
+
+    check "normalize: figure space to regular" \
+        "25 kg" "$(normalize_text $'25\xe2\x80\x87kg')"
+
+    # URLs and DOIs
+    check "normalize: strip https URL" \
+        "as shown." "$(normalize_text "as shown. https://doi.org/10.1038/s41586-021-03213-y")"
+
+    check "normalize: strip http URL" \
+        "visit for details." "$(normalize_text "visit http://example.com/path for details.")"
+
+    check "normalize: strip doi prefix" \
+        "published in Nature." "$(normalize_text "published in Nature. doi:10.1038/nature12345")"
+
+    check "normalize: strip DOI prefix" \
+        "published in Nature." "$(normalize_text "published in Nature. DOI: 10.1038/nature12345")"
+
+    check "normalize: URL not eating surrounding text" \
+        "See for more." "$(normalize_text "See https://example.com for more.")"
+
+    # Private Use Area characters (math font garbage)
+    check "normalize: strip PUA characters" \
+        "the result is clear" "$(normalize_text $'the result \xee\x80\x80is clear')"
+
+    # Ellipsis character
+    check "normalize: ellipsis to three dots" \
+        "wait..." "$(normalize_text $'wait\xe2\x80\xa6')"
+
+    # Mojibake (UTF-8 misread as Latin-1)
+    check "normalize: mojibake em dash" \
+        "word -- word" "$(normalize_text $'word \xe2\x80\x94 word')"
+
+    check "normalize: mojibake left double quote" \
+        "the \"result\" here" "$(normalize_text $'the \xe2\x80\x9cresult\xe2\x80\x9d here')"
+
+    # ftfy integration (real mojibake: UTF-8 bytes misread as Windows-1252)
+    check "normalize: ftfy fixes curly quote mojibake" \
+        "the \"result\" here" "$(normalize_text $'the \xc3\xa2\xc2\x80\xc2\x9cresult\xc3\xa2\xc2\x80\xc2\x9d here')"
+
     # Bullet/list markers
     check "normalize: strip bullet character" \
         "First item" "$(normalize_text $'\xe2\x80\xa2 First item')"
@@ -4421,6 +4647,84 @@ if type normalize_text &>/dev/null; then
     _PDF_EXPECT=$'The information was presented in Section 3 of the document. The results were statistically significant.\n\nDr. Smith noted that the data supports the hypothesis.'
     check "normalize: realistic PDF paragraph" \
         "$_PDF_EXPECT" "$(normalize_text "$_PDF_INPUT")"
+
+    # Subscript digits (chemistry: H₂O, CO₂)
+    check "normalize: subscript digits H2O" \
+        "H2O" "$(normalize_text $'H\xe2\x82\x82O')"
+
+    check "normalize: subscript digits CO2" \
+        "CO2" "$(normalize_text $'CO\xe2\x82\x82')"
+
+    check "normalize: subscript digit range" \
+        "C6H12O6" "$(normalize_text $'C\xe2\x82\x86H\xe2\x82\x81\xe2\x82\x82O\xe2\x82\x86')"
+
+    # Middle dot (interpunct)
+    check "normalize: middle dot to space" \
+        "kg m" "$(normalize_text $'kg\xc2\xb7m')"
+
+    # Equilibrium arrow
+    check "normalize: equilibrium arrow" \
+        "A is in equilibrium with B" "$(normalize_text $'A \xe2\x87\x8c B')"
+
+    # Angle brackets (Dirac notation)
+    check "normalize: angle brackets stripped" \
+        "psi|phi" "$(normalize_text $'\xe2\x9f\xa8psi|phi\xe2\x9f\xa9')"
+
+    # et al. bare citation
+    check "normalize: et al. bare citation stripped" \
+        "Smith et al. showed" "$(normalize_text "Smith et al.1-8 showed")"
+
+    check "normalize: et al. bare citation en-dash" \
+        "Smith et al. showed" "$(normalize_text $'Smith et al.1\xe2\x80\x938 showed')"
+
+    # Micro-prefix units
+    check "normalize: micromolar" \
+        "5 micromolar" "$(normalize_text $'5 \xc2\xb5M')"
+
+    check "normalize: micrometer" \
+        "5 micrometers" "$(normalize_text $'5 \xc2\xb5m')"
+
+    check "normalize: micrograms" \
+        "5 micrograms" "$(normalize_text $'5 \xc2\xb5g')"
+
+    check "normalize: microseconds" \
+        "5 microseconds" "$(normalize_text $'5 \xc2\xb5s')"
+
+    check "normalize: micro standalone" \
+        "5 micro-X" "$(normalize_text $'5 \xc2\xb5X')"
+
+    # Greek letter spacing
+    check "normalize: Greek alpha with spacing" \
+        "the alpha phase" "$(normalize_text $'the \xce\xb1 phase')"
+
+    check "normalize: Greek beta with spacing" \
+        "the beta decay" "$(normalize_text $'the \xce\xb2 decay')"
+
+    check "normalize: Greek lambda spelling" \
+        "the lambda function" "$(normalize_text $'the \xce\xbb function')"
+
+    # Ohm symbol after number
+    check "normalize: ohm after number" \
+        "50 ohms resistor" "$(normalize_text $'50 \xce\xa9 resistor')"
+
+    # Superscript inverse (e.g., cm⁻¹)
+    check "normalize: superscript inverse" \
+        "cm inverse" "$(normalize_text $'cm\xe2\x81\xbb\xc2\xb9')"
+
+    # Superscript digits stripped (not inverse)
+    check "normalize: bare superscript stripped" \
+        "x" "$(normalize_text $'x\xc2\xb2')"
+
+    # Space before punctuation cleanup
+    check "normalize: no space before period" \
+        "2.5 angstroms." "$(normalize_text $'2.5 \xc3\x85.')"
+
+    # Space after opening bracket cleanup
+    check "normalize: no space after opening paren" \
+        "(see above)" "$(normalize_text "( see above)")"
+
+    check "normalize: no space after opening bracket" \
+        "[see above]" "$(normalize_text "[ see above]")"
 else
     check "normalize: function not found" "yes" "no"
 fi
