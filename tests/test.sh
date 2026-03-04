@@ -4217,6 +4217,16 @@ check "Speak11.swift: passes SPEAK11_MUTE_CHECKED to speak.sh" \
 check "speak.sh: skips mute check when SPEAK11_MUTE_CHECKED=1" \
     "yes" "$(grep -q 'SPEAK11_MUTE_CHECKED' "$SPEAK_SH" && echo "yes" || echo "no")"
 
+# Cmd+V paste support: dialogs with text fields must use .regular activation policy
+check "Speak11.swift: API key dialog enables paste (regular activation)" \
+    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'setActivationPolicy(.regular)' && echo "yes" || echo "no")"
+
+check "Speak11.swift: custom voice dialog enables paste (regular activation)" \
+    "yes" "$(awk '/func customVoice/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'setActivationPolicy(.regular)' && echo "yes" || echo "no")"
+
+check "Speak11.swift: dialogs restore accessory policy via defer" \
+    "yes" "$(grep -c 'defer.*setActivationPolicy(.accessory)' "$SCRIPT_DIR/Speak11.swift" | awk '{print ($1 >= 2) ? "yes" : "no"}')"
+
 # ── Text normalization (PDF cleanup) ─────────────────────────────
 
 section "Text normalization (PDF cleanup)"

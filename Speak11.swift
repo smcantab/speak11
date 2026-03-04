@@ -1045,6 +1045,8 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     }
 
     @objc private func customVoice() {
+        NSApp.setActivationPolicy(.regular)
+        defer { NSApp.setActivationPolicy(.accessory) }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Custom Voice ID"
@@ -1176,6 +1178,8 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
 
     @discardableResult
     private func showAPIKeyDialog(forBackendSwitch: Bool, optional: Bool = false) -> Bool {
+        NSApp.setActivationPolicy(.regular)
+        defer { NSApp.setActivationPolicy(.accessory) }
         NSApp.activate(ignoringOtherApps: true)
         let existingKey = readAPIKey()
 
