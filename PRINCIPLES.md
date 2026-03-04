@@ -553,3 +553,35 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
     `git archive --format=zip --prefix=speak11/ -o /tmp/speak11.zip HEAD`
     then `gh release create vX.Y.Z /tmp/speak11.zip --title "Speak11 vX.Y.Z" --notes "..."`.
     The `/latest/` URL auto-resolves to the newest release.
+
+25. **Text normalization runs before TTS.** `normalize_text()` in speak.sh
+    preprocesses clipboard/PDF text via a 15-step Python pipeline (with a
+    bash `sed` fallback for hyphen rejoining only). Steps: CRLF normalization,
+    zero-width character stripping, non-breaking space replacement, trailing
+    whitespace removal, hyphenated word rejoining, paragraph break protection
+    (placeholder swap), mid-sentence line break rejoining, paragraph restore,
+    space collapsing, repeated punctuation collapsing, dash normalization,
+    footnote marker stripping, bullet/list marker stripping, Roman numeral
+    conversion after labels (Section, Chapter, etc.), final space collapse.
+    Uses `printf '%s'` pipe (not `<<<`) to avoid trailing newline. Paragraph
+    breaks (`\n\n`) are protected with `\x00` placeholder before line joining.
+
+26. **API key is validated on entry.** Both `install.command` and
+    `Speak11Settings.swift` validate the API key by calling
+    `GET /v1/user/subscription` with the `xi-api-key` header. 200 means valid,
+    401 means invalid key, 403 means missing permissions, 000/timeout means
+    network error. The dialog loops (retry) until the key validates or the
+    user presses Skip/Cancel.
+
+27. **Cmd+V paste requires .regular activation policy.** Menu bar apps use
+    `.accessory` activation policy, which means no Edit menu and no Cmd+V.
+    Before showing any `NSAlert` with a text field, temporarily switch to
+    `NSApp.setActivationPolicy(.regular)` and restore with
+    `defer { NSApp.setActivationPolicy(.accessory) }`.
+
+28. **Test suite supports filtering and fast mode.** `tests/test.sh` accepts
+    `--fast` (skip slow network tests), `--list` (print section names and
+    exit), and a positional filter argument (case-insensitive substring match
+    on section names). When python3 is stubbed in tests, the stub must guard
+    against `tts_server.py` (`case "$arg" in *tts_server.py) exit 1`) to
+    prevent the daemon lock-conflict path from adding 30s per sentence.
