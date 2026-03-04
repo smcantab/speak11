@@ -2,8 +2,11 @@
 # test.sh — Test suite for Speak11
 #
 # Usage:
-#   bash tests/test.sh           # all tests (Swift compile included, ~20s)
-#   bash tests/test.sh --fast    # skip slow Swift compile test
+#   bash tests/test.sh                    # all tests (Swift compile included)
+#   bash tests/test.sh --fast             # skip slow Swift compile test
+#   bash tests/test.sh "normalize"        # run sections matching "normalize"
+#   bash tests/test.sh --fast "STATUS"    # fast + filter by "STATUS"
+#   bash tests/test.sh --list             # list all section names
 
 set -eo pipefail
 
@@ -11,10 +14,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SPEAK_SH="$SCRIPT_DIR/speak.sh"
 SETTINGS_SWIFT="$SCRIPT_DIR/Speak11.swift"
 FAST=false
-[[ "${1:-}" == "--fast" ]] && FAST=true
+FILTER=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --fast) FAST=true ;;
+        --list)
+            grep -oP '(?<=^section ").*(?=")' "$0" 2>/dev/null || \
+                grep '^section "' "$0" | sed 's/^section "//;s/"$//'
+            exit 0 ;;
+        *) FILTER="$arg" ;;
+    esac
+done
 
 PASS=0
 FAIL=0
+_SKIP_SECTION=false
 
 # Isolate tests from any real running TTS daemon
 export TTS_SOCK="/tmp/speak11_test_nosock_$$"
@@ -22,6 +37,7 @@ export TTS_SOCK="/tmp/speak11_test_nosock_$$"
 # ── Helpers ──────────────────────────────────────────────────────
 
 check() {
+    $_SKIP_SECTION && return 0
     local desc="$1" expected="$2" actual="$3"
     if [ "$expected" = "$actual" ]; then
         printf "  PASS  %s\n" "$desc"
@@ -35,6 +51,7 @@ check() {
 }
 
 check_exit() {
+    $_SKIP_SECTION && return 0
     local desc="$1" expected_exit="$2"
     shift 2
     local actual_exit=0
@@ -42,7 +59,15 @@ check_exit() {
     check "$desc" "$expected_exit" "$actual_exit"
 }
 
-section() { printf "\n── %s\n" "$1"; }
+section() {
+    if [ -n "$FILTER" ]; then
+        case "$1" in
+            *"$FILTER"*|*"$(echo "$FILTER" | tr '[:upper:]' '[:lower:]')"*) _SKIP_SECTION=false ;;
+            *) _SKIP_SECTION=true; return 0 ;;
+        esac
+    fi
+    printf "\n── %s\n" "$1"
+}
 
 # ── 1. Config variable priority ──────────────────────────────────
 
@@ -3527,12 +3552,15 @@ STUB
 cat > "$_STUBS/python3" << 'PYSTUB'
 #!/bin/bash
 for arg in "$@"; do
+    # Fake TTS: create minimal WAV file
     if [ "$arg" = "mlx_audio.tts.generate" ]; then
         printf "RIFF" > "speak11.wav"
         exit 0
     fi
+    # Daemon: exit non-zero so speak.sh falls back to direct invocation
+    case "$arg" in *tts_server.py) exit 1 ;; esac
 done
-# Pass through to real python3 for split_sentences etc.
+# Pass through to real python3 for split_sentences, normalize_text etc.
 /usr/bin/python3 "$@"
 PYSTUB
 chmod +x "$_STUBS"/*
