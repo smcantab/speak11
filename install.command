@@ -258,19 +258,20 @@ if [ ! -d "$_VENV_DIR" ]; then
         spin "Setting up text normalization…"
         python3 -m venv "$_VENV_DIR" >> "$_LOG_FILE" 2>&1 && \
             "$_VENV_DIR/bin/pip" install --upgrade pip >> "$_LOG_FILE" 2>&1 && \
-            "$_VENV_DIR/bin/pip" install ftfy >> "$_LOG_FILE" 2>&1 && \
+            "$_VENV_DIR/bin/pip" install ftfy pylatexenc >> "$_LOG_FILE" 2>&1 && \
             step "Text normalization ready" || \
             printf '  \033[33m⚠\033[0m  Could not install text normalization (non-fatal)\n'
         unspin
     fi
-elif ! "$_VENV_DIR/bin/python3" -c "import ftfy" 2>/dev/null; then
-    "$_VENV_DIR/bin/pip" install ftfy >> "$_LOG_FILE" 2>&1 || true
+elif ! "$_VENV_DIR/bin/python3" -c "import ftfy; import pylatexenc" 2>/dev/null; then
+    "$_VENV_DIR/bin/pip" install ftfy pylatexenc >> "$_LOG_FILE" 2>&1 || true
     step "Text normalization updated"
 fi
 
 # ── Install speak.sh ──────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR"
 cp -f "$SCRIPT_DIR/speak.sh" "$INSTALL_DIR/speak.sh"
+cp -f "$SCRIPT_DIR/normalize.py" "$INSTALL_DIR/normalize.py"
 cp -f "$SCRIPT_DIR/tts_server.py" "$INSTALL_DIR/tts_server.py"
 cp -f "$SCRIPT_DIR/install-local.sh" "$INSTALL_DIR/install-local.sh"
 if [ -f "$SCRIPT_DIR/uninstall.command" ]; then

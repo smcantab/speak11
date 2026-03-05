@@ -555,33 +555,37 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
     The `/latest/` URL auto-resolves to the newest release.
 
 25. **Text normalization runs before TTS.** `normalize_text()` in speak.sh
-    preprocesses clipboard/PDF text via a single Python call organized in 6
-    phases (with a bash `sed` fallback for hyphen rejoining only):
-    **Phase 1 -- Encoding/character normalization:** ftfy mojibake fix, CRLF,
-    zero-width/PUA/soft-hyphen stripping, ligature decomposition (fi/fl/ff/ffi/ffl),
-    Unicode minus/ellipsis/smart quotes/middle dot/prime, subscript digits
-    (U+2080-2089 for chemistry: H₂O), thin/hair/figure/NBSP to regular space.
-    **Phase 2 -- Line/paragraph structure:** hyphenated word rejoining across
-    line breaks, paragraph-aware line joining (double-newline preserved via
-    `\x00` placeholder, breaks after `.!?:"'` preserved).
-    **Phase 3 -- Noise removal:** URL/DOI stripping, citation stripping (bare
-    `impacts1-8` requires lowercase lookbehind `(?<=[a-z])` to avoid eating
-    chemistry formulas like CO2; separate regex for `et al.` period; bracketed
-    `[1,3]`; author-year `(Smith 2020)`), superscript inverse (⁻¹ to
-    " inverse"), superscript digit stripping, bullet/list marker removal.
-    **Phase 4 -- Dash/punctuation:** em/en-dash to ` -- `, repeated
-    punctuation collapsing.
-    **Phase 5 -- Scientific symbols/units:** curated symbol dict (Å, ±, ×,
-    ≈, ≤, ≥, ∞, √, →, ⇌, ∂, ∑, ∏, ∫, ∇, ℃, ℉, ℏ, ℓ, ‰, ⟨⟩, etc.),
-    degree symbol context (°C/°F/°K/bare°), micro-prefix units (µm, µg, µM,
-    etc.), ohm after digits (Ω), Greek letters via `unicodedata` (with
-    lambda spelling fix), Roman numerals after labels (Section IV to Section 4).
-    **Phase 6 -- Final cleanup:** multi-space collapsing, space-before-punctuation
-    removal, space-after-opening-bracket removal.
-    Uses `printf '%s'` pipe (not `<<<`) to avoid trailing newline. ftfy is a
-    required dependency (installed in the venv by both install.command and
-    install-local.sh). Do not duplicate features already handled natively by
-    TTS engines (e.g., ASCII abbreviations like km, eV, DNA).
+    calls `normalize.py` (standalone Python module) via stdin/stdout, with a
+    bash `sed` fallback for hyphen rejoining when Python is unavailable.
+    Architecture: source detection -> front-end -> shared back-end. Each
+    front-end converts its source format into clean prose; the back-end never
+    knows the source.
+    **Source detection:** Score-based heuristics (`_is_latex`, `_is_markdown`)
+    with high-confidence guards and negative signals. Detection order: LaTeX
+    first (higher specificity, with ATX heading as negative signal), then
+    Markdown, then PDF (default). Detection is logged to stderr.
+    **PDF front-end (`_frontend_pdf`):** ftfy mojibake fix, CRLF, invisible
+    character stripping, ligature decomposition, subscript/superscript digits,
+    Unicode fractions, hyphenated word rejoining, paragraph-aware line joining,
+    scientific notation, isotope notation, bullet/list markers.
+    **LaTeX front-end (`_frontend_latex`):** L1: comment/preamble stripping.
+    L2: custom macro expansion (with ~/.config/speak11/latex_macros.tex cache).
+    L3: environment dispatch table (equation, align, figure, table, lists,
+    theorem-likes, skips). L4: text macros (sections, citations, cross-refs,
+    siunitx, mhchem, special chars). L5: math-to-speech conversion (22-rule
+    cascade producing word-form English). L6: pylatexenc accents + residual
+    cleanup. Math-internal environments (pmatrix, cases, etc.) are handled
+    by L5, not L3.
+    **Markdown front-end (`_frontend_markdown`):** M1: YAML frontmatter +
+    Obsidian comments. M2: code blocks. M3: headings. M4: images. M5: links
+    + wikilinks. M6: text formatting (bold, italic, strikethrough, inline
+    code). M7: math (reuses `_math_to_speech`). M8: block elements (tables,
+    blockquotes, lists, horizontal rules). M9: HTML tag stripping. M10: cleanup.
+    **Shared back-end:** Phase 0: universal typographic normalization (smart
+    quotes, minus, ellipsis, exotic whitespace). Phase A: noise removal (chemicals,
+    URLs, citations). Phase B: punctuation, abbreviations, ranges, math operators.
+    Phase C: scientific symbols, units, Greek letters, Roman numerals. Phase D:
+    final cleanup. Dependencies: ftfy and pylatexenc (installed in venv).
 
 26. **API key is validated on entry.** Both `install.command` and
     `Speak11Settings.swift` validate the API key by calling

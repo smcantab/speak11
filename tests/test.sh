@@ -5310,8 +5310,819 @@ check "speak.sh: no system python3 fallback in split_sentences" \
 check "speak.sh: no system python3 fallback in run_local_tts" \
     "yes" "$(awk '/^run_local_tts\(\)/,/^}/{if(/fallback.*python3|PY=python3/) found=1} END{print found?"no":"yes"}' "$SPEAK_SH")"
 
-check "speak.sh: ftfy is required import (not try/except)" \
-    "yes" "$(grep -q '^import.*ftfy' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "normalize.py: ftfy is required import (not try/except)" \
+    "yes" "$(grep -q '^import.*ftfy' "$SCRIPT_DIR/normalize.py" && echo "yes" || echo "no")"
+
+check "speak.sh: calls normalize.py" \
+    "yes" "$(grep -q 'normalize\.py' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "normalize.py: exists and is executable-compatible" \
+    "yes" "$([ -f "$SCRIPT_DIR/normalize.py" ] && head -1 "$SCRIPT_DIR/normalize.py" | grep -q 'python' && echo "yes" || echo "no")"
+
+# ── LaTeX mode ───────────────────────────────────────────────────
+
+section "LaTeX mode"
+
+if type normalize_text &>/dev/null; then
+
+    # ── Detection: LaTeX vs plain text ──
+    # LaTeX input should be detected and processed through the LaTeX pipeline.
+    # Plain text should pass through unchanged (no false positives).
+
+    check "latex: detect \\begin{equation}" \
+        "The equation: E equals m c squared." \
+        "$(normalize_text '\begin{equation} E = mc^2 \end{equation}')"
+
+    check "latex: detect inline math \$...\$" \
+        "where alpha equals 5" \
+        "$(normalize_text 'where $\alpha = 5$')"
+
+    check "latex: plain text not detected as LaTeX" \
+        "The quick brown fox jumped." \
+        "$(normalize_text 'The quick brown fox jumped.')"
+
+    check "latex: Windows path not detected as LaTeX" \
+        "See C:\Users\smith\data.csv for details." \
+        "$(normalize_text 'See C:\Users\smith\data.csv for details.')"
+
+    # ── L1: Comment and preamble stripping ──
+
+    check "latex: strip comments" \
+        "Section: Hello. world." \
+        "$(normalize_text '\section{Hello} % this is a comment
+world.')"
+
+    check "latex: preserve escaped percent" \
+        "Section: Results. Achieved 100 percent accuracy." \
+        "$(normalize_text '\section{Results}
+Achieved 100\% accuracy.')"
+
+    check "latex: strip preamble before \\begin{document}" \
+        "Hello world." \
+        "$(normalize_text '\documentclass{article}
+\usepackage{amsmath}
+\begin{document}
+Hello world.
+\end{document}')"
+
+    # ── L2: Custom macro expansion ──
+
+    check "latex: expand \\newcommand (0 args)" \
+        "The the reals are nice." \
+        "$(normalize_text '\newcommand{\R}{\mathbb{R}}
+The $\R$ are nice.')"
+
+    check "latex: expand \\newcommand (1 arg)" \
+        "the vector x is small" \
+        "$(normalize_text '\newcommand{\vect}[1]{\vec{#1}}
+the $\vect{x}$ is small')"
+
+    # ── L3: Environment handling ──
+
+    check "latex: equation environment with label" \
+        "Equation schrodinger: i h-bar partial over partial t psi equals H hat psi." \
+        "$(normalize_text '\begin{equation}\label{eq:schrodinger}
+i\hbar \frac{\partial}{\partial t} \psi = \hat{H} \psi
+\end{equation}')"
+
+    check "latex: align environment" \
+        "The aligned equations: a equals b plus c; d equals e minus f." \
+        "$(normalize_text '\begin{align}
+a &= b + c \\
+d &= e - f
+\end{align}')"
+
+    check "latex: itemize list" \
+        "First item. Second item." \
+        "$(normalize_text '\begin{itemize}
+\item First item.
+\item Second item.
+\end{itemize}')"
+
+    check "latex: enumerate list" \
+        "1. First. 2. Second." \
+        "$(normalize_text '\begin{enumerate}
+\item First.
+\item Second.
+\end{enumerate}')"
+
+    check "latex: figure with caption" \
+        "Figure results: The main results." \
+        "$(normalize_text '\begin{figure}
+\includegraphics{plot.png}
+\caption{The main results.}
+\label{fig:results}
+\end{figure}')"
+
+    check "latex: table with caption" \
+        "Table data: Summary of experiments." \
+        "$(normalize_text '\begin{table}
+\caption{Summary of experiments.}
+\label{tab:data}
+\begin{tabular}{cc}
+a & b \\
+c & d
+\end{tabular}
+\end{table}')"
+
+    check "latex: theorem environment" \
+        "Theorem. For all x in the reals, f of x is continuous." \
+        "$(normalize_text '\begin{theorem}
+For all $x \in \mathbb{R}$, $f(x)$ is continuous.
+\end{theorem}')"
+
+    check "latex: tikzpicture skipped" \
+        "Before. Diagram omitted. After." \
+        "$(normalize_text 'Before.
+\begin{tikzpicture}
+\draw (0,0) -- (1,1);
+\end{tikzpicture}
+After.')"
+
+    check "latex: abstract environment" \
+        "Abstract. We study the problem of X." \
+        "$(normalize_text '\begin{abstract}
+We study the problem of X.
+\end{abstract}')"
+
+    check "latex: proof environment" \
+        "Proof. By contradiction. End of proof." \
+        "$(normalize_text '\begin{proof}
+By contradiction.
+\end{proof}')"
+
+    check "latex: bibliography skipped" \
+        "Conclusion here. References omitted." \
+        "$(normalize_text 'Conclusion here.
+\begin{thebibliography}{99}
+\bibitem{ref1} Author, Title, 2020.
+\end{thebibliography}')"
+
+    # ── L4: Text macro expansion ──
+
+    check "latex: section headings" \
+        "Section: Introduction. We begin here." \
+        "$(normalize_text '\section{Introduction}
+We begin here.')"
+
+    check "latex: subsection" \
+        "Subsection: Methods. We used X." \
+        "$(normalize_text '\subsection{Methods}
+We used X.')"
+
+    check "latex: citations silenced" \
+        "As shown previously, the result holds." \
+        "$(normalize_text 'As shown previously~\cite{Smith2020}, the result holds.')"
+
+    check "latex: cross-references expanded" \
+        "See figure results for details." \
+        "$(normalize_text 'See~\ref{fig:results} for details.')"
+
+    check "latex: text formatting unwrapped" \
+        "This is important text here." \
+        "$(normalize_text 'This is \textbf{important} text \emph{here}.')"
+
+    check "latex: footnote announced" \
+        "Main text (footnote: extra detail) continues." \
+        "$(normalize_text 'Main text\footnote{extra detail} continues.')"
+
+    check "latex: special characters" \
+        "Section: Test. AT&T costs \$5 and 100 percent done." \
+        "$(normalize_text '\section{Test}
+AT\&T costs \$5 and 100\% done.')"
+
+    check "latex: tilde as non-breaking space" \
+        "Section: Test. Doctor Smith et al" \
+        "$(normalize_text '\section{Test}
+Dr.~Smith et~al.')"
+
+    check "latex: em-dash and en-dash" \
+        "Section: Test. He said -- hello -- and left. Pages 5 to 10." \
+        "$(normalize_text '\section{Test}
+He said --- hello --- and left. Pages 5--10.')"
+
+    check "latex: URLs removed" \
+        "See for details." \
+        "$(normalize_text 'See \url{https://example.com} for details.')"
+
+    # ── L5: Math to spoken English ──
+
+    check "latex: simple fraction" \
+        "a over b" \
+        "$(normalize_text '$\frac{a}{b}$')"
+
+    check "latex: nested fraction" \
+        "1 over 1 plus x over y" \
+        "$(normalize_text '$\frac{1}{1 + \frac{x}{y}}$')"
+
+    check "latex: square root" \
+        "square root of x plus 1" \
+        "$(normalize_text '$\sqrt{x + 1}$')"
+
+    check "latex: nth root" \
+        "3-th root of 8" \
+        "$(normalize_text '$\sqrt[3]{8}$')"
+
+    check "latex: integral with limits" \
+        "integral from 0 to infinity of e to the -x squared dx" \
+        "$(normalize_text '$\int_0^{\infty} e^{-x^2} dx$')"
+
+    check "latex: integral without limits" \
+        "integral of f of x dx" \
+        "$(normalize_text '$\int f(x) dx$')"
+
+    check "latex: sum with limits" \
+        "sum from n equals 1 to N of a sub n" \
+        "$(normalize_text '$\sum_{n=1}^{N} a_n$')"
+
+    check "latex: product" \
+        "product from i equals 1 to n of x sub i" \
+        "$(normalize_text '$\prod_{i=1}^{n} x_i$')"
+
+    check "latex: limit" \
+        "limit as x to 0 of sin x over x" \
+        "$(normalize_text '$\lim_{x \to 0} \frac{\sin x}{x}$')"
+
+    check "latex: superscripts" \
+        "Section: Test. x squared plus y cubed plus z to the n" \
+        "$(normalize_text '\section{Test}
+$x^2 + y^3 + z^n$')"
+
+    check "latex: subscripts" \
+        "Section: Test. a sub i plus b sub jk" \
+        "$(normalize_text '\section{Test}
+$a_i + b_{jk}$')"
+
+    check "latex: Greek letters" \
+        "alpha plus beta equals gamma" \
+        "$(normalize_text '$\alpha + \beta = \gamma$')"
+
+    check "latex: decorated symbols" \
+        "x hat plus y bar plus vector z" \
+        "$(normalize_text '$\hat{x} + \bar{y} + \vec{z}$')"
+
+    check "latex: matrix" \
+        "the matrix with rows: a, b; c, d" \
+        "$(normalize_text '$\begin{pmatrix} a & b \\ c & d \end{pmatrix}$')"
+
+    check "latex: cases" \
+        "cases: x, if x greater than or equal to 0; -x, otherwise" \
+        "$(normalize_text '$\begin{cases} x & \text{if } x \geq 0 \\ -x & \text{otherwise} \end{cases}$')"
+
+    check "latex: display equation announced" \
+        "Section: Test. The equation: E equals m c squared." \
+        "$(normalize_text '\section{Test}
+\[ E = mc^2 \]')"
+
+    check "latex: inline math not announced" \
+        "Section: Test. where x squared plus 1 equals 0" \
+        "$(normalize_text '\section{Test}
+where $x^2 + 1 = 0$')"
+
+    check "latex: relation operators" \
+        "a less than or equal to b, c not equal to d" \
+        "$(normalize_text '$a \leq b$, $c \neq d$')"
+
+    check "latex: set notation" \
+        "x in the reals" \
+        "$(normalize_text '$x \in \mathbb{R}$')"
+
+    check "latex: arrows" \
+        "f: X to Y implies A" \
+        "$(normalize_text '$f: X \to Y \Rightarrow A$')"
+
+    check "latex: trig functions" \
+        "sin squared x plus cos squared x equals 1" \
+        "$(normalize_text '$\sin^2 x + \cos^2 x = 1$')"
+
+    check "latex: binomial coefficient" \
+        "n choose k" \
+        "$(normalize_text '$\binom{n}{k}$')"
+
+    check "latex: operatorname" \
+        "div F equals 0" \
+        "$(normalize_text '$\operatorname{div} F = 0$')"
+
+    check "latex: dot notation (derivatives)" \
+        "x dot plus y double dot" \
+        "$(normalize_text '$\dot{x} + \ddot{y}$')"
+
+    check "latex: underbrace" \
+        "a plus b, that is c," \
+        "$(normalize_text '$\underbrace{a + b}_{c}$')"
+
+    check "latex: inverse and transpose" \
+        "Section: Test. A inverse B transpose" \
+        "$(normalize_text '\section{Test}
+$A^{-1} B^{T}$')"
+
+    # ── L4.5: Chemistry (mhchem) ──
+
+    check "latex: \\ce{} simple formula" \
+        "water" \
+        "$(normalize_text '$\ce{H2O}$')"
+
+    check "latex: \\ce{} reaction" \
+        "carbon dioxide plus water to H2CO3" \
+        "$(normalize_text '$\ce{CO2 + H2O -> H2CO3}$')"
+
+    # ── L6: Residual cleanup ──
+
+    check "latex: unknown commands stripped silently" \
+        "The value x is large." \
+        "$(normalize_text 'The \someunknowncommand{value} $x$ is \anothercmd large.')"
+
+    check "latex: residual braces removed" \
+        "Section: Test. hello world" \
+        "$(normalize_text '\section{Test}
+{hello} {world}')"
+
+    check "latex: spacing commands removed from math" \
+        "Section: Test. a plus b" \
+        "$(normalize_text '\section{Test}
+$a \, + \; b$')"
+
+    check "latex: sizing commands removed from math" \
+        "Section: Test. a over b" \
+        "$(normalize_text '\section{Test}
+$\left( \frac{a}{b} \right)$')"
+
+    # ── Integration: partial selection (most common case) ──
+
+    check "latex: paragraph with inline math" \
+        "Section: Physics. We define the energy E equals m c squared where m is the mass and c is the speed of light." \
+        "$(normalize_text '\section{Physics}
+We define the energy $E = mc^2$ where $m$ is the mass and $c$ is the speed of light.')"
+
+    check "latex: multi-paragraph with display math" \
+        "Section: Math. Consider the integral. The equation: integral from 0 to 1 of x squared dx. This equals 1 over 3." \
+        "$(normalize_text '\section{Math}
+Consider the integral.
+\[
+\int_0^1 x^2 \, dx
+\]
+This equals $\frac{1}{3}$.')"
+
+    # ── Structural checks ──
+
+    check "normalize.py: _is_latex function defined" \
+        "yes" "$(grep -q '_is_latex' "$SCRIPT_DIR/normalize.py" && echo "yes" || echo "no")"
+
+    check "normalize.py: _frontend_latex function defined" \
+        "yes" "$(grep -q '_frontend_latex' "$SCRIPT_DIR/normalize.py" && echo "yes" || echo "no")"
+
+else
+    check "latex: normalize_text function not found" "yes" "no"
+fi
+
+# ── Markdown mode ────────────────────────────────────────────────
+
+section "Markdown mode"
+
+if type normalize_text &>/dev/null; then
+
+    # ── Detection: Markdown vs plain text ──
+
+    check "markdown: detect fenced code block" \
+        "Code block omitted. Hello." \
+        "$(normalize_text '```python
+print("hi")
+```
+Hello.')"
+
+    check "markdown: detect ATX heading + bold" \
+        "Title: Introduction. This is important." \
+        "$(normalize_text '# Introduction
+
+This is **important**.')"
+
+    check "markdown: plain text not detected as Markdown" \
+        "Just a normal sentence." \
+        "$(normalize_text 'Just a normal sentence.')"
+
+    check "markdown: URL not detected as Markdown" \
+        "See for details." \
+        "$(normalize_text 'See https://example.com for details.')"
+
+    # ── M1: YAML frontmatter + Obsidian comments ──
+
+    check "markdown: YAML frontmatter stripped" \
+        "Title: Introduction. Hello world." \
+        "$(normalize_text '---
+title: Introduction
+date: 2024-01-01
+tags: [test, demo]
+---
+
+# Introduction
+
+Hello world.')"
+
+    check "markdown: Obsidian comments stripped" \
+        "Title: Test. Before. After." \
+        "$(normalize_text '# Test
+
+Before.
+%% This is a private comment %%
+After.')"
+
+    # ── M2: Code blocks ──
+
+    check "markdown: fenced code block omitted" \
+        "Title: Test. Before. Code block omitted. After." \
+        "$(normalize_text '# Test
+
+Before.
+
+```javascript
+const x = 1;
+console.log(x);
+```
+
+After.')"
+
+    check "markdown: indented code block omitted" \
+        "Title: Test. Before. Code block omitted. After." \
+        "$(normalize_text '# Test
+
+Before.
+
+    def hello():
+        print("world")
+
+After.')"
+
+    # ── M3: Headings ──
+
+    check "markdown: H1 heading" \
+        "Title: Introduction." \
+        "$(normalize_text '# Introduction')"
+
+    check "markdown: H2 heading" \
+        "Section: Methods. We used X." \
+        "$(normalize_text '## Methods
+
+We used X.')"
+
+    check "markdown: H3 heading" \
+        "Subsection: Results. Data here." \
+        "$(normalize_text '### Results
+
+Data here.')"
+
+    check "markdown: H4-H6 headings" \
+        "Details. More info." \
+        "$(normalize_text '#### Details
+
+More info.')"
+
+    # ── M4: Images ──
+
+    check "markdown: image with alt text" \
+        "Title: Test. Image: A nice plot." \
+        "$(normalize_text '# Test
+
+![A nice plot](image.png)')"
+
+    check "markdown: image without alt text" \
+        "Title: Test. Image." \
+        "$(normalize_text '# Test
+
+![](image.png)')"
+
+    # ── M5: Links + wikilinks ──
+
+    check "markdown: markdown link" \
+        "Title: Test. See the documentation for details." \
+        "$(normalize_text '# Test
+
+See the [documentation](https://example.com) for details.')"
+
+    check "markdown: bare URL removed" \
+        "Title: Test. See for details." \
+        "$(normalize_text '# Test
+
+See https://example.com for details.')"
+
+    check "markdown: Obsidian wikilink" \
+        "Title: Test. See My Note for details." \
+        "$(normalize_text '# Test
+
+See [[My Note]] for details.')"
+
+    check "markdown: Obsidian wikilink with alias" \
+        "Title: Test. See the note for details." \
+        "$(normalize_text '# Test
+
+See [[My Note|the note]] for details.')"
+
+    # ── M6: Text formatting ──
+
+    check "markdown: bold text" \
+        "Title: Test. This is important." \
+        "$(normalize_text '# Test
+
+This is **important**.')"
+
+    check "markdown: italic text (asterisks)" \
+        "Title: Test. This is emphasized." \
+        "$(normalize_text '# Test
+
+This is *emphasized*.')"
+
+    check "markdown: italic text (underscores)" \
+        "Title: Test. This is emphasized." \
+        "$(normalize_text '# Test
+
+This is _emphasized_.')"
+
+    check "markdown: strikethrough removed" \
+        "Title: Test. This is old text." \
+        "$(normalize_text '# Test
+
+This is ~~old~~ text.')"
+
+    check "markdown: inline code" \
+        "Title: Test. Use the print function." \
+        "$(normalize_text "# Test
+
+Use the "'`'"print"'`'" function.")"
+
+    # ── M7: Math (reuse _math_to_speech) ──
+
+    check "markdown: inline math dollar" \
+        "Title: Test. The value x squared plus 1." \
+        "$(normalize_text '# Test
+
+The value $x^2 + 1$.')"
+
+    check "markdown: display math" \
+        "Title: Test. The equation: E equals m c squared." \
+        "$(normalize_text '# Test
+
+$$E = mc^2$$')"
+
+    # ── M8: Block elements ──
+
+    check "markdown: GFM table omitted" \
+        "Title: Test. Before. Table omitted. After." \
+        "$(normalize_text '# Test
+
+Before.
+
+| Name | Value |
+|------|-------|
+| a    | 1     |
+| b    | 2     |
+
+After.')"
+
+    check "markdown: blockquote" \
+        "Title: Test. Quote: To be or not to be." \
+        "$(normalize_text '# Test
+
+> To be or not to be.')"
+
+    check "markdown: unordered list" \
+        "Title: Test. First item. Second item." \
+        "$(normalize_text '# Test
+
+- First item.
+- Second item.')"
+
+    check "markdown: ordered list" \
+        "Title: Test. 1. First. 2. Second." \
+        "$(normalize_text '# Test
+
+1. First.
+2. Second.')"
+
+    check "markdown: horizontal rule" \
+        "Title: Test. Above. Below." \
+        "$(normalize_text '# Test
+
+Above.
+
+---
+
+Below.')"
+
+    # ── M9: HTML tags stripped ──
+
+    check "markdown: HTML tags stripped" \
+        "Title: Test. Hello world." \
+        "$(normalize_text '# Test
+
+<div class="note">Hello</div> <em>world</em>.')"
+
+    # ── M10: Cleanup ──
+
+    check "markdown: multiple blank lines collapsed" \
+        "Title: Test. First paragraph. Second paragraph." \
+        "$(normalize_text '# Test
+
+First paragraph.
+
+
+
+Second paragraph.')"
+
+    # ── Integration ──
+
+    check "markdown: full Obsidian note" \
+        "Title: My Research Note. Section: Background. The energy E equals m c squared is fundamental. Section: Results. Our data shows alpha equals 0.05. Image: Results plot. See Methods for the full procedure." \
+        "$(normalize_text '---
+title: My Research Note
+tags: [physics, research]
+---
+
+# My Research Note
+
+## Background
+
+The energy $E = mc^2$ is fundamental.
+
+## Results
+
+Our data shows $\alpha = 0.05$.
+
+![Results plot](results.png)
+
+See [[Methods|Methods]] for the full procedure.')"
+
+    # ── Structural checks ──
+
+    check "normalize.py: _is_markdown function defined" \
+        "yes" "$(grep -q '_is_markdown' "$SCRIPT_DIR/normalize.py" && echo "yes" || echo "no")"
+
+    check "normalize.py: _frontend_markdown function defined" \
+        "yes" "$(grep -q '_frontend_markdown' "$SCRIPT_DIR/normalize.py" && echo "yes" || echo "no")"
+
+else
+    check "markdown: normalize_text function not found" "yes" "no"
+fi
+
+# ── Back-end (cross-frontend) ────────────────────────────────────
+
+section "Back-end (cross-frontend)"
+
+if type normalize_text &>/dev/null; then
+
+    # Wrappers that force detection to a specific front-end.
+    latex_wrap() { printf '\\usepackage{amsmath}\n\\newcommand{\\z}{x}\n%s' "$1"; }
+    md_wrap()    { printf -- '---\ntitle: t\n---\n\n# X\n\n%s' "$1"; }
+
+    # Parametric back-end test: same input through PDF and Markdown front-ends.
+    # LaTeX front-end skipped: it garbles Unicode characters that weren't in the
+    # original LaTeX source. Only use for inputs without PDF-only artifacts.
+    check_backend() {
+        local desc="$1" expected="$2" input="$3"
+        check "backend: $desc (PDF)"    "$expected" "$(normalize_text "$input")"
+        local md_result
+        md_result="$(normalize_text "$(md_wrap "$input")")"
+        # Strip wrapper prefix "Title: X. " from MD result.
+        md_result="${md_result#Title: X. }"
+        check "backend: $desc (MD)"     "$expected" "$md_result"
+    }
+
+    # ── Wrapper validation: empty input ──
+
+    check "backend: empty PDF"    "" "$(normalize_text '')"
+    check "backend: empty LaTeX"  "" "$(normalize_text "$(latex_wrap '')")"
+    check "backend: empty MD"     "Title: X." "$(normalize_text "$(md_wrap '')")"
+
+    # Helper to produce Unicode strings (bash 3.2 lacks $'\u...' support).
+    _u() { "$VENV_PYTHON" -c "import sys; sys.stdout.write('$1')"; }
+
+    # ── Phase 0: Typographic normalization ──
+
+    check_backend "smart double quotes" \
+        '"hello"' \
+        "$(_u '\u201chello\u201d')"
+
+    check_backend "smart single quotes" \
+        "'world'" \
+        "$(_u '\u2018world\u2019')"
+
+    check_backend "ellipsis" \
+        "and then..." \
+        "$(_u 'and then\u2026')"
+
+    check_backend "Unicode minus to hyphen" \
+        "x - y" \
+        "$(_u 'x \u2212 y')"
+
+    # ── Phase A: Chemicals ──
+
+    check_backend "water formula" \
+        "water" \
+        "H2O"
+
+    check_backend "carbon dioxide" \
+        "carbon dioxide" \
+        "CO2"
+
+    check_backend "sodium chloride" \
+        "sodium chloride" \
+        "NaCl"
+
+    # ── Phase B: Abbreviations ──
+
+    check_backend "Figure abbreviation" \
+        "Figure 1 shows the data." \
+        "Fig. 1 shows the data."
+
+    check_backend "Equation abbreviation" \
+        "Equation 2 gives the result." \
+        "Eq. 2 gives the result."
+
+    check_backend "e.g. expansion" \
+        "for example, X" \
+        "e.g., X"
+
+    check_backend "i.e. expansion" \
+        "that is, Y" \
+        "i.e., Y"
+
+    check_backend "et al expansion" \
+        "Smith et al found" \
+        "Smith et al. found"
+
+    # ── Phase B: Math operators ──
+
+    check_backend "equals sign" \
+        "x equals 5" \
+        "x = 5"
+
+    check_backend "percentage" \
+        "95 percent" \
+        "95%"
+
+    # ── Phase B: Numeric ranges ──
+
+    check_backend "en-dash range" \
+        "5 to 10" \
+        "$(_u '5\u201310')"
+
+    # ── Phase C: Units ──
+
+    check_backend "kilopascals" \
+        "100 kilopascals" \
+        "100 kPa"
+
+    check_backend "nanometers" \
+        "500 nanometers" \
+        "500 nm"
+
+    check_backend "degrees Celsius" \
+        "25 degrees Celsius" \
+        "$(_u '25\u00b0C')"
+
+    check_backend "kilocalories" \
+        "2000 kilocalories" \
+        "2000 kcal"
+
+    # ── Phase C: Greek letters ──
+
+    check_backend "alpha letter" \
+        "The alpha value." \
+        "$(_u 'The \u03b1 value.')"
+
+    check_backend "beta letter" \
+        "The beta value." \
+        "$(_u 'The \u03b2 value.')"
+
+    # ── Phase C: Symbols ──
+
+    check_backend "plus or minus" \
+        "5 plus or minus 1" \
+        "$(_u '5 \u00b1 1')"
+
+    check_backend "times symbol" \
+        "3 times 4" \
+        "$(_u '3 \u00d7 4')"
+
+    check_backend "infinity" \
+        "to infinity" \
+        "$(_u 'to \u221e')"
+
+    # ── Edge cases: no false positives in detection ──
+
+    check "detection: plain English" \
+        "The quick brown fox jumped over the lazy dog." \
+        "$(normalize_text 'The quick brown fox jumped over the lazy dog.')"
+
+    check "detection: web page text" \
+        "Welcome to our website. Click here to learn more." \
+        "$(normalize_text 'Welcome to our website. Click here to learn more.')"
+
+    check "detection: number with hash not expanded" \
+        "Issue #42 is important." \
+        "$(normalize_text 'Issue #42 is important.')"
+
+else
+    check "backend: normalize_text function not found" "yes" "no"
+fi
 
 # ── Summary ──────────────────────────────────────────────────────
 
