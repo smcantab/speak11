@@ -5620,6 +5620,23 @@ Consider the integral.
 \]
 This equals $\frac{1}{3}$.')"
 
+    # ── siunitx ──
+
+    check "latex: SI plural (5 meters)" \
+        "Section: Test. 5 meters" \
+        "$(normalize_text '\section{Test}
+\SI{5}{\meter}')"
+
+    check "latex: SI singular (1 meter)" \
+        "Section: Test. 1 meter" \
+        "$(normalize_text '\section{Test}
+\SI{1}{\meter}')"
+
+    check "latex: SI compound (joules per mole per kelvin)" \
+        "Section: Test. 8.314 joules per mole per kelvin" \
+        "$(normalize_text '\section{Test}
+\SI{8.314}{\joule\per\mole\per\kelvin}')"
+
     # ── Structural checks ──
 
     check "normalize.py: _is_latex function defined" \
@@ -5650,7 +5667,6 @@ Hello.')"
     check "markdown: detect ATX heading + bold" \
         "Title: Introduction. This is important." \
         "$(normalize_text '# Introduction
-
 This is **important**.')"
 
     check "markdown: plain text not detected as Markdown" \
@@ -5672,65 +5688,68 @@ tags: [test, demo]
 ---
 
 # Introduction
-
 Hello world.')"
 
     check "markdown: Obsidian comments stripped" \
         "Title: Test. Before. After." \
-        "$(normalize_text '# Test
+        "$(normalize_text '---
+title: t
+---
 
-Before.
-%% This is a private comment %%
-After.')"
+# Test
+Before. %% This is a private comment %% After.')"
 
     # ── M2: Code blocks ──
 
     check "markdown: fenced code block omitted" \
         "Title: Test. Before. Code block omitted. After." \
-        "$(normalize_text '# Test
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 Before.
-
 ```javascript
 const x = 1;
 console.log(x);
 ```
-
-After.')"
-
-    check "markdown: indented code block omitted" \
-        "Title: Test. Before. Code block omitted. After." \
-        "$(normalize_text '# Test
-
-Before.
-
-    def hello():
-        print("world")
-
 After.')"
 
     # ── M3: Headings ──
 
     check "markdown: H1 heading" \
         "Title: Introduction." \
-        "$(normalize_text '# Introduction')"
+        "$(normalize_text '---
+title: t
+---
+
+# Introduction')"
 
     check "markdown: H2 heading" \
         "Section: Methods. We used X." \
-        "$(normalize_text '## Methods
+        "$(normalize_text '---
+title: t
+---
 
+## Methods
 We used X.')"
 
     check "markdown: H3 heading" \
         "Subsection: Results. Data here." \
-        "$(normalize_text '### Results
+        "$(normalize_text '---
+title: t
+---
 
+### Results
 Data here.')"
 
     check "markdown: H4-H6 headings" \
         "Details. More info." \
-        "$(normalize_text '#### Details
+        "$(normalize_text '---
+title: t
+---
 
+#### Details
 More info.')"
 
     # ── M4: Images ──
@@ -5738,39 +5757,42 @@ More info.')"
     check "markdown: image with alt text" \
         "Title: Test. Image: A nice plot." \
         "$(normalize_text '# Test
-
 ![A nice plot](image.png)')"
 
     check "markdown: image without alt text" \
         "Title: Test. Image." \
         "$(normalize_text '# Test
-
 ![](image.png)')"
+
+    check "markdown: Obsidian image wikilink" \
+        "Title: Test. Image." \
+        "$(normalize_text '# Test
+![[results.png]]')"
 
     # ── M5: Links + wikilinks ──
 
     check "markdown: markdown link" \
         "Title: Test. See the documentation for details." \
         "$(normalize_text '# Test
-
 See the [documentation](https://example.com) for details.')"
 
     check "markdown: bare URL removed" \
         "Title: Test. See for details." \
-        "$(normalize_text '# Test
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 See https://example.com for details.')"
 
     check "markdown: Obsidian wikilink" \
         "Title: Test. See My Note for details." \
         "$(normalize_text '# Test
-
 See [[My Note]] for details.')"
 
     check "markdown: Obsidian wikilink with alias" \
         "Title: Test. See the note for details." \
         "$(normalize_text '# Test
-
 See [[My Note|the note]] for details.')"
 
     # ── M6: Text formatting ──
@@ -5778,86 +5800,158 @@ See [[My Note|the note]] for details.')"
     check "markdown: bold text" \
         "Title: Test. This is important." \
         "$(normalize_text '# Test
-
 This is **important**.')"
 
     check "markdown: italic text (asterisks)" \
         "Title: Test. This is emphasized." \
-        "$(normalize_text '# Test
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 This is *emphasized*.')"
 
     check "markdown: italic text (underscores)" \
         "Title: Test. This is emphasized." \
-        "$(normalize_text '# Test
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 This is _emphasized_.')"
+
+    check "markdown: italic does not corrupt star-lists" \
+        "Title: Test. First item Second item" \
+        "$(normalize_text '---
+title: t
+---
+
+# Test
+* First item
+* Second item')"
+
+    check "markdown: underscores in technical identifiers preserved" \
+        "Title: Test. The signal_to_noise_ratio and p_value are important." \
+        "$(normalize_text '---
+title: t
+---
+
+# Test
+The signal_to_noise_ratio and p_value are important.')"
 
     check "markdown: strikethrough removed" \
         "Title: Test. This is old text." \
-        "$(normalize_text '# Test
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 This is ~~old~~ text.')"
 
     check "markdown: inline code" \
         "Title: Test. Use the print function." \
         "$(normalize_text "# Test
-
 Use the "'`'"print"'`'" function.")"
+
+    # ── M6b: Footnotes and tags ──
+
+    check "markdown: inline footnote ref stripped" \
+        "Title: Test. This is a claim." \
+        "$(normalize_text '---
+title: t
+---
+
+# Test
+This is a claim[^1].')"
+
+    check "markdown: footnote definition" \
+        "Title: Test. (footnote: See Smith 2020 for details.)" \
+        "$(normalize_text '---
+title: t
+---
+
+# Test
+[^1]: See Smith 2020 for details.')"
+
+    check "markdown: Obsidian tag stripped" \
+        "Title: Test. Important finding." \
+        "$(normalize_text '---
+title: t
+---
+
+# Test
+Important finding. #research')"
 
     # ── M7: Math (reuse _math_to_speech) ──
 
     check "markdown: inline math dollar" \
         "Title: Test. The value x squared plus 1." \
-        "$(normalize_text '# Test
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 The value $x^2 + 1$.')"
 
     check "markdown: display math" \
         "Title: Test. The equation: E equals m c squared." \
-        "$(normalize_text '# Test
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 $$E = mc^2$$')"
 
     # ── M8: Block elements ──
 
     check "markdown: GFM table omitted" \
         "Title: Test. Before. Table omitted. After." \
-        "$(normalize_text '# Test
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 Before.
-
 | Name | Value |
 |------|-------|
 | a    | 1     |
 | b    | 2     |
-
 After.')"
+
+    check "markdown: Obsidian callout" \
+        "Title: Test. Note: Important. Pay attention to this." \
+        "$(normalize_text '---
+title: t
+---
+
+# Test
+> [!note] Important
+> Pay attention to this.')"
 
     check "markdown: blockquote" \
         "Title: Test. Quote: To be or not to be." \
         "$(normalize_text '# Test
-
 > To be or not to be.')"
 
     check "markdown: unordered list" \
         "Title: Test. First item. Second item." \
         "$(normalize_text '# Test
-
 - First item.
 - Second item.')"
 
     check "markdown: ordered list" \
         "Title: Test. 1. First. 2. Second." \
         "$(normalize_text '# Test
-
 1. First.
 2. Second.')"
 
     check "markdown: horizontal rule" \
-        "Title: Test. Above. Below." \
-        "$(normalize_text '# Test
+        $'Title: Test. Above.\n\nBelow.' \
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 Above.
 
 ---
@@ -5868,26 +5962,30 @@ Below.')"
 
     check "markdown: HTML tags stripped" \
         "Title: Test. Hello world." \
-        "$(normalize_text '# Test
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 <div class="note">Hello</div> <em>world</em>.')"
 
     # ── M10: Cleanup ──
 
-    check "markdown: multiple blank lines collapsed" \
-        "Title: Test. First paragraph. Second paragraph." \
-        "$(normalize_text '# Test
+    check "markdown: paragraph breaks preserved" \
+        $'Title: Test. First paragraph.\n\nSecond paragraph.' \
+        "$(normalize_text '---
+title: t
+---
 
+# Test
 First paragraph.
-
-
 
 Second paragraph.')"
 
     # ── Integration ──
 
     check "markdown: full Obsidian note" \
-        "Title: My Research Note. Section: Background. The energy E equals m c squared is fundamental. Section: Results. Our data shows alpha equals 0.05. Image: Results plot. See Methods for the full procedure." \
+        $'Title: My Research Note.\n\nSection: Background.\n\nThe energy E equals m c squared is fundamental.\n\nSection: Results.\n\nOur data shows alpha equals 0.05.\n\nImage: Results plot.\n\nSee Methods for the full procedure.' \
         "$(normalize_text '---
 title: My Research Note
 tags: [physics, research]
@@ -5927,7 +6025,7 @@ if type normalize_text &>/dev/null; then
 
     # Wrappers that force detection to a specific front-end.
     latex_wrap() { printf '\\usepackage{amsmath}\n\\newcommand{\\z}{x}\n%s' "$1"; }
-    md_wrap()    { printf -- '---\ntitle: t\n---\n\n# X\n\n%s' "$1"; }
+    md_wrap()    { printf -- '---\ntitle: t\n---\n\n# X\n%s' "$1"; }
 
     # Parametric back-end test: same input through PDF and Markdown front-ends.
     # LaTeX front-end skipped: it garbles Unicode characters that weren't in the
@@ -6076,6 +6174,27 @@ if type normalize_text &>/dev/null; then
     check "detection: number with hash not expanded" \
         "Issue #42 is important." \
         "$(normalize_text 'Issue #42 is important.')"
+
+    # ── Regression: = double-expansion through LaTeX ──
+    # Both inline math = and prose = should each produce exactly one "equals".
+    check "latex: no double-expansion of equals" \
+        "Section: Test. The value x equals 5. where a equals b" \
+        "$(normalize_text '\section{Test}
+The value $x = 5$.
+where a = b')"
+
+    # ── LaTeX special chars survive L4-L6 pipeline ──
+    check "latex: ampersand survives pipeline" \
+        "Section: Test. AT&T costs \$5." \
+        "$(normalize_text '\section{Test}
+AT\&T costs \$5.')"
+
+    # ── Python normalization path actually works (not just sed fallback) ──
+    # The sed fallback only does hyphen-rejoining; it cannot expand abbreviations.
+    # If Fig. -> Figure, the Python path is working.
+    check "normalize: Python path active (not sed fallback)" \
+        "Figure 1 shows results." \
+        "$(normalize_text 'Fig. 1 shows results.')"
 
 else
     check "backend: normalize_text function not found" "yes" "no"

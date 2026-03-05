@@ -13,6 +13,9 @@
 *.app
 speak11-audio
 
+# Python
+__pycache__/
+
 # IDE
 .vscode/
 .idea/

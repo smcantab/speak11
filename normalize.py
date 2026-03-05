@@ -85,7 +85,7 @@ def _is_markdown(t):
     has_high = False
     # High-confidence signals.
     if re.search(r'^```', t, re.MULTILINE):              score += 3; has_high = True
-    if re.search(r'^#{1,6}\s', t, re.MULTILINE):          score += 3; has_high = True
+    if re.search(r'^#{1,6}\s', t, re.MULTILINE):          score += 2; has_high = True
     if re.search(r'\*\*[^*]+\*\*', t):                    score += 2; has_high = True
     if re.search(r'\[[^\]]+\]\([^)]+\)', t):               score += 2; has_high = True
     if re.search(r'!\[[^\]]*\]\([^)]+\)', t):              score += 2; has_high = True
@@ -109,10 +109,8 @@ def _frontend_markdown(t):
     t = re.sub(r'\A---\s*\n.*?\n---\s*\n', '', t, flags=re.DOTALL)
     t = re.sub(r'%%.*?%%', '', t, flags=re.DOTALL)
 
-    # ── M2: Code blocks ──
+    # ── M2: Code blocks (fenced only; indented code omitted to avoid false positives) ──
     t = re.sub(r'^```[^\n]*\n.*?\n```', 'Code block omitted.', t, flags=re.MULTILINE | re.DOTALL)
-    # Indented code blocks (4+ spaces or tab at start, consecutive lines).
-    t = re.sub(r'(?:^(?:    |\t)[^\n]+\n?)+', 'Code block omitted.\n', t, flags=re.MULTILINE)
 
     # ── M3: Headings ──
     t = re.sub(r'^#\s+(.*?)$', r'Title: \1.', t, flags=re.MULTILINE)
@@ -120,9 +118,10 @@ def _frontend_markdown(t):
     t = re.sub(r'^###\s+(.*?)$', r'Subsection: \1.', t, flags=re.MULTILINE)
     t = re.sub(r'^#{4,6}\s+(.*?)$', r'\1.', t, flags=re.MULTILINE)
 
-    # ── M4: Images ──
+    # ── M4: Images (standard + Obsidian wikilink) ──
     t = re.sub(r'!\[([^\]]+)\]\([^)]+\)', r'Image: \1.', t)
     t = re.sub(r'!\[\]\([^)]+\)', 'Image.', t)
+    t = re.sub(r'!\[\[([^\]]+)\]\]', 'Image.', t)
 
     # ── M5: Links + wikilinks ──
     t = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', t)
@@ -130,12 +129,20 @@ def _frontend_markdown(t):
     t = re.sub(r'\[\[([^\]]+)\]\]', r'\1', t)               # [[target]]
 
     # ── M6: Text formatting ──
-    t = re.sub(r'\*\*([^*]+)\*\*', r'\1', t)     # bold
-    t = re.sub(r'__([^_]+)__', r'\1', t)          # bold (underscores)
-    t = re.sub(r'\*([^*]+)\*', r'\1', t)          # italic
-    t = re.sub(r'(?<!\w)_([^_]+)_(?!\w)', r'\1', t)  # italic (underscores, word-boundary safe)
+    t = re.sub(r'\*\*([^*\n]+)\*\*', r'\1', t)      # bold
+    t = re.sub(r'__([^_\n]+)__', r'\1', t)           # bold (underscores)
+    t = re.sub(r'\*([^*\n]+)\*', r'\1', t)           # italic
+    t = re.sub(r'(?<!\w)_([^_\n]+)_(?!\w)', r'\1', t)  # italic (underscores, word-boundary safe)
     t = re.sub(r'~~([^~]+)~~', r'\1', t)          # strikethrough
     t = re.sub(r'`([^`]+)`', r'\1', t)            # inline code
+
+    # ── M6b: Footnotes and tags ──
+    # Footnote definitions: [^1]: text → (footnote: text)
+    t = re.sub(r'^\[\^[^\]]+\]:\s*(.*)', r'(footnote: \1)', t, flags=re.MULTILINE)
+    # Inline footnote refs: [^1] → stripped
+    t = re.sub(r'\[\^[^\]]+\]', '', t)
+    # Obsidian tags: #tag → stripped (but not headings — already converted by M3)
+    t = re.sub(r'(?<=\s)#[a-zA-Z][\w/-]*', '', t)
 
     # ── M7: Math (reuse _math_to_speech) ──
     def _display_md(m):
@@ -149,7 +156,19 @@ def _frontend_markdown(t):
     # ── M8: Block elements ──
     # GFM tables (header + separator + rows).
     t = re.sub(r'(?:^\|[^\n]+\|\s*\n){2,}', 'Table omitted.\n', t, flags=re.MULTILINE)
-    # Blockquotes.
+    # Obsidian callouts: > [!note] Title\n> content → "Note: Title. content"
+    def _callout(m):
+        ctype = m.group(1).capitalize()
+        title = m.group(2).strip() if m.group(2) else ''
+        body_lines = m.group(3).split('\n') if m.group(3) else []
+        body = ' '.join(l.lstrip('>').strip() for l in body_lines if l.strip())
+        result = ctype + ': ' + title + '.' if title else ctype + '.'
+        if body:
+            result += ' ' + body
+        return result
+    t = re.sub(r'^>\s*\[!(\w+)\][ \t]*(.*)\n((?:^>.*\n?)*)',
+               _callout, t, flags=re.MULTILINE)
+    # Blockquotes (after callouts so callouts aren't treated as generic quotes).
     def _blockquote(m):
         lines = m.group(0).split('\n')
         text = ' '.join(l.lstrip('>').strip() for l in lines if l.strip())
@@ -171,9 +190,10 @@ def _frontend_markdown(t):
     # ── M9: HTML tags stripped ──
     t = re.sub(r'<[^>]+>', '', t)
 
-    # ── M10: Cleanup ──
-    t = re.sub(r'\n{2,}', ' ', t)
+    # ── M10: Cleanup (preserve paragraph breaks like PDF/LaTeX front-ends) ──
+    t = re.sub(r'\n{2,}', '\x00', t)
     t = re.sub(r'\n', ' ', t)
+    t = t.replace('\x00', '\n\n')
     return t
 
 # ── LaTeX front-end ──────────────────────────────────────────────
@@ -395,8 +415,9 @@ def _process_text(text):
     text = re.sub(r' {2,}', ' ', text)
     return text.strip()
 
-def _siunitx_expand(unit_spec):
+def _siunitx_expand(unit_spec, value=None):
     """Expand a siunitx unit specification to spoken words."""
+    singular = value is not None and re.match(r'^1(?:\.0+)?$', value.strip())
     segments = re.split(r'\\per\b', unit_spec)
     parts = []
     for i, seg in enumerate(segments):
@@ -406,7 +427,10 @@ def _siunitx_expand(unit_spec):
             if cmd in _SI_PREFIX_TEX:
                 words.append(_SI_PREFIX_TEX[cmd])
             elif cmd in _SI_UNIT_TEX:
-                words.append(_SI_UNIT_TEX[cmd] + 's' if i == 0 else _SI_UNIT_TEX[cmd])
+                unit = _SI_UNIT_TEX[cmd]
+                if i == 0 and not singular:
+                    unit += 's'
+                words.append(unit)
             elif cmd == 'squared':
                 if words: words[-1] += ' squared'
             elif cmd == 'cubed':
@@ -645,7 +669,7 @@ def _frontend_latex(t):
         val = re.sub(r'(\d+\.?\d*)[eE]([+-]?\d+)',
             lambda em: em.group(1) + ' times 10 to the ' + em.group(2), val)
         val = val.replace('\\pm', ' plus or minus ')
-        return val + ' ' + _siunitx_expand(unit)
+        return val + ' ' + _siunitx_expand(unit, value=m.group(1))
     t = re.sub(r'\\SI\{([^}]+)\}\{([^}]+)\}', _si_handler, t)
     t = re.sub(r'\\si\{([^}]+)\}', lambda m: _siunitx_expand(m.group(1)), t)
     t = re.sub(r'\\num\{([^}]+)\}', lambda m: m.group(1).replace('\\pm', ' plus or minus '), t)
