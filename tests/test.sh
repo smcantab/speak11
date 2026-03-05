@@ -5090,6 +5090,10 @@ if type normalize_text &>/dev/null; then
     check "normalize: bare citation still stripped" \
         "results showed" "$(normalize_text 'results1,2,3 showed')"
 
+    check "normalize: month-year not stripped as citation" \
+        "In the meeting (March 2024), we discussed results." \
+        "$(normalize_text 'In the meeting (March 2024), we discussed results.')"
+
     # ── Chemical formula lookup table (#5) ──────────────────────
     check "normalize: H2O to water" \
         "water" "$(normalize_text 'H2O')"
@@ -5125,7 +5129,7 @@ if type normalize_text &>/dev/null; then
 
     # ── Unit separator: slash to per ────────────────────────────
     check "normalize: mg/mL to per" \
-        "5 milligrams per milliliters" "$(normalize_text '5 mg/mL')"
+        "5 milligrams per milliliter" "$(normalize_text '5 mg/mL')"
 
     check "normalize: m/s to per" \
         "10 m per s" "$(normalize_text '10 m/s')"
@@ -5637,6 +5641,11 @@ This equals $\frac{1}{3}$.')"
         "$(normalize_text '\section{Test}
 \SI{8.314}{\joule\per\mole\per\kelvin}')"
 
+    check "latex: SI multi-unit numerator (kilo gram meter)" \
+        "Section: Test. 5 kilograms meters" \
+        "$(normalize_text '\section{Test}
+\SI{5}{\kilo\gram\meter}')"
+
     # ── Structural checks ──
 
     check "normalize.py: _is_latex function defined" \
@@ -5861,6 +5870,11 @@ This is ~~old~~ text.')"
         "Title: Test. Use the print function." \
         "$(normalize_text "# Test
 Use the "'`'"print"'`'" function.")"
+
+    check "markdown: inline code with dollar sign not treated as math" \
+        "Title: Test. Compare x and y variables." \
+        "$(normalize_text "# Test
+Compare "'`$x$`'" and "'`$y$`'" variables.")"
 
     # ── M6b: Footnotes and tags ──
 
@@ -6146,11 +6160,23 @@ if type normalize_text &>/dev/null; then
         "2000 kilocalories" \
         "2000 kcal"
 
+    check_backend "denominator singular (per mole)" \
+        "5 joules per mole" \
+        "5 J/mol"
+
+    check_backend "unit slash no false positive on s/he" \
+        "s/he is here" \
+        "s/he is here"
+
     # ── Phase C: Greek letters ──
 
     check_backend "alpha letter" \
         "The alpha value." \
         "$(_u 'The \u03b1 value.')"
+
+    check_backend "alpha with tonos diacritic" \
+        "The alpha value." \
+        "$(_u 'The \u03ac value.')"
 
     check_backend "beta letter" \
         "The beta value." \

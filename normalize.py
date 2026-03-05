@@ -134,7 +134,7 @@ def _frontend_markdown(t):
     t = re.sub(r'\*([^ *\n][^*\n]*)\*', r'\1', t)    # italic (space after * = list marker, not italic)
     t = re.sub(r'(?<!\w)_([^_\n]+)_(?!\w)', r'\1', t)  # italic (underscores, word-boundary safe)
     t = re.sub(r'~~([^~]+)~~', r'\1', t)          # strikethrough
-    t = re.sub(r'`([^`]+)`', r'\1', t)            # inline code
+    t = re.sub(r'`([^`]+)`', lambda m: m.group(1).replace('$', ''), t)  # inline code (strip $ to prevent M7 math)
 
     # ── M6b: Footnotes and tags ──
     # Footnote definitions: [^1]: text → (footnote: text)
@@ -423,11 +423,13 @@ def _siunitx_expand(unit_spec, value=None):
     for i, seg in enumerate(segments):
         # Resolve \prefix\base chains.
         words = []
+        pending_prefix = ''
         for cmd in re.findall(r'\\([a-zA-Z]+)', seg):
             if cmd in _SI_PREFIX_TEX:
-                words.append(_SI_PREFIX_TEX[cmd])
+                pending_prefix += _SI_PREFIX_TEX[cmd]
             elif cmd in _SI_UNIT_TEX:
-                unit = _SI_UNIT_TEX[cmd]
+                unit = pending_prefix + _SI_UNIT_TEX[cmd]
+                pending_prefix = ''
                 if i == 0 and not singular:
                     unit += 's'
                 words.append(unit)
@@ -438,8 +440,11 @@ def _siunitx_expand(unit_spec, value=None):
             elif cmd == 'per':
                 pass  # handled by split
             else:
-                words.append(cmd)
-        part = ''.join(words)
+                words.append(pending_prefix + cmd)
+                pending_prefix = ''
+        if pending_prefix:
+            words.append(pending_prefix)
+        part = ' '.join(words)
         parts.append(part)
     return ' per '.join(parts)
 
@@ -845,7 +850,8 @@ def _phaseA(t):
     t = re.sub(r'(?<=[a-z]{4})\d+(?:\s*[,\u2013\u2014-]\s*\d+)+(?=[\s.,;:?!\x27\x22)\]]|$)', '', t)
     t = re.sub(r'(?<=et al\.)\d+(?:\s*[,\u2013\u2014-]\s*\d+)*', '', t)
     t = re.sub(r'\s*\[\d+(?:\s*[,;\u2013\u2014-]\s*\d+)*\]\s*', ' ', t)
-    t = re.sub(r'\s*\((?:[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+[A-Z][a-z]+))?(?:,?\s*\d{4})\s*(?:;\s*[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+[A-Z][a-z]+))?(?:,?\s*\d{4})\s*)*)\)\s*', ' ', t)
+    _MONTHS = '(?:January|February|March|April|May|June|July|August|September|October|November|December)'
+    t = re.sub(r'\s*\((?:(?!' + _MONTHS + r')[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+(?!' + _MONTHS + r')[A-Z][a-z]+))?(?:,?\s*\d{4})\s*(?:;\s*(?!' + _MONTHS + r')[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+(?!' + _MONTHS + r')[A-Z][a-z]+))?(?:,?\s*\d{4})\s*)*)\)\s*', ' ', t)
     return t
 
 def _phaseB(t):
@@ -1017,14 +1023,20 @@ def _phaseC(t):
     t = _SI_RE.sub(lambda m: ' ' + _SI[m.group(1)], t)
     # Unit separator: slash -> per.
     _UNIT_ENDS = sorted(set(w.split()[-1] for w in _SI.values()) |
-        set('micro'+w for w in _UUNIT.values()) |
-        {'m','s','g','A','N'},
+        set('micro'+w for w in _UUNIT.values()),
         key=len, reverse=True)
+    _UNIT_SINGLE = sorted({'m','s','g','A','N'}, key=len, reverse=True)
+    # Multi-char units: word boundary is sufficient.
     _UNIT_SLASH_RE = re.compile(r'\b(' + '|'.join(re.escape(u) for u in _UNIT_ENDS) + r')/([a-zA-Z])')
     t = _UNIT_SLASH_RE.sub(r'\1 per \2', t)
-    # Expand denominator units after per.
+    # Single-letter units: require preceding digit to avoid s/he, w/o, etc.
+    _UNIT_SLASH_1_RE = re.compile(r'(?<=\d)(\s*)(' + '|'.join(re.escape(u) for u in _UNIT_SINGLE) + r')/([a-zA-Z])')
+    t = _UNIT_SLASH_1_RE.sub(r'\1\2 per \3', t)
+    # Expand denominator units after per (singular form -- "per mole" not "per moles").
+    _SI_SING = {k: (v[:-1] if v.endswith('s') and v not in ('siemens',) else v)
+        for k, v in _SI.items()}
     _SI_PER_RE = re.compile(r'(?<=per )(' + '|'.join(sorted(_SI, key=len, reverse=True)) + r')\b')
-    t = _SI_PER_RE.sub(lambda m: _SI[m.group(1)], t)
+    t = _SI_PER_RE.sub(lambda m: _SI_SING[m.group(1)], t)
     # Ohm: number + Ω.
     t = re.sub(r'(?<=\d)\s*[\u2126\u03a9](?=\s|$|[.,;:?!)])', ' ohms', t)
     # Greek letters via unicodedata.
@@ -1033,7 +1045,10 @@ def _phaseC(t):
         c = m.group(0)
         n = _ud.name(c, '')
         if 'GREEK' in n and 'LETTER' in n:
-            w = n.split()[-1].lower()
+            # Strip modifiers: "GREEK SMALL LETTER ALPHA WITH TONOS" -> take word before "WITH"
+            parts = n.split()
+            idx = parts.index('LETTER') + 1 if 'LETTER' in parts else -1
+            w = parts[idx].lower() if idx < len(parts) else parts[-1].lower()
             return ' ' + _GREEK_FIX.get(w, w) + ' '
         return c
     t = re.sub(r'[\u0391-\u03c9]', _greek, t)
