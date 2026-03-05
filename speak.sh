@@ -111,6 +111,7 @@ TEXT=$(printf '%s' "$TEXT" | iconv -f UTF-8 -t UTF-8//IGNORE)
 # ── Normalize clipboard/PDF text for TTS ──────────────────────────
 # Cleans artifacts from PDF copy-paste so TTS engines read text naturally.
 # Uses normalize.py (venv python + ftfy); falls back to bash sed if absent.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PYTHON="${VENV_PYTHON:-$HOME/.local/share/speak11/venv/bin/python3}"
 normalize_text() {
     local result
@@ -191,8 +192,6 @@ cleanup() {
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Sentence splitter ────────────────────────────────────────────
 # Split text into sentences for streaming playback.

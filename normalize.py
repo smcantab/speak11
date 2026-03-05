@@ -416,10 +416,7 @@ def _siunitx_expand(unit_spec):
             else:
                 words.append(cmd)
         part = ''.join(words)
-        if i == 0:
-            parts.append(part)
-        else:
-            parts.append(part)
+        parts.append(part)
     return ' per '.join(parts)
 
 def _frontend_latex(t):

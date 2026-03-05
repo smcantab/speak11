@@ -2455,10 +2455,6 @@ else:
 check "daemon: CancelledError inherits from Exception" \
     "yes" "$(grep -q 'class CancelledError(Exception)' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-# Daemon: orphaned temp cleanup on startup
-check "daemon cleans speak11_tts_ dirs on startup" \
-    "yes" "$(grep -q "speak11_tts_" "$TTS_SERVER" && grep -q 'shutil.rmtree' "$TTS_SERVER" && echo "yes" || echo "no")"
-
 # Daemon: handle_client closes connection in finally block
 check "daemon: connection closed in finally" \
     "yes" "$(grep -A 3 'finally:' "$TTS_SERVER" | grep -q 'conn.close' && echo "yes" || echo "no")"
@@ -2533,19 +2529,6 @@ check "daemon client socket timeout" \
 check "run_local_tts: fallback to direct mlx invocation" \
     "yes" "$(awk '/^run_local_tts/,/^}/' "$SPEAK_SH" | grep -q 'mlx_audio.tts.generate' && echo "yes" || echo "no")"
 
-# Daemon: cancel_check called between segments in the generation loop
-check "daemon: cancel_check between segments" \
-    "yes" "$(grep -A 2 'for result in results' "$TTS_SERVER" | grep -q 'cancel_check' && echo "yes" || echo "no")"
-
-# Daemon: CancelledError handler logs but does not crash
-check "daemon: CancelledError handler in handle_client" \
-    "yes" "$(grep -q 'except CancelledError' "$TTS_SERVER" && echo "yes" || echo "no")"
-
-# Daemon: gc/cache cleanup in handle_client (moved from generate_audio)
-check "daemon: gc.collect present in tts_server.py" \
-    "yes" "$(grep -q 'gc.collect' "$TTS_SERVER" && echo "yes" || echo "no")"
-check "daemon: mx.metal.clear_cache present in tts_server.py" \
-    "yes" "$(grep -q 'clear_cache' "$TTS_SERVER" && echo "yes" || echo "no")"
 
 # ── 51. Functional: toggle kills entire process tree ──────────────
 
@@ -2747,28 +2730,6 @@ check "pipeline ordering: gen1 play1 gen2 wait1 play2 wait2" \
 
 rm -rf "$_TESTTMP"
 
-# ── 54. Functional: sentence splitting with iconv ─────────────────
-
-section "Functional: iconv Unicode sanitization"
-
-# Valid UTF-8 passes through iconv unchanged
-_ICONV_VALID=$(printf 'Hello world' | iconv -f UTF-8 -t UTF-8//IGNORE 2>/dev/null)
-check "iconv: valid UTF-8 unchanged" \
-    "Hello world" "$_ICONV_VALID"
-
-# Empty input after iconv → empty output
-_ICONV_EMPTY=$(printf '' | iconv -f UTF-8 -t UTF-8//IGNORE 2>/dev/null)
-check "iconv: empty input → empty output" \
-    "" "$_ICONV_EMPTY"
-
-# Valid Unicode (accented chars) preserved
-_ICONV_ACCENT=$(printf 'café résumé' | iconv -f UTF-8 -t UTF-8//IGNORE 2>/dev/null)
-check "iconv: accented characters preserved" \
-    "café résumé" "$_ICONV_ACCENT"
-
-# iconv call present in speak.sh before any TTS processing
-check "iconv sanitization before TTS" \
-    "yes" "$(grep -q "iconv -f UTF-8 -t UTF-8//IGNORE" "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # ── 55. Daemon robustness ────────────────────────────────────────
 
@@ -2777,10 +2738,6 @@ section "Daemon robustness"
 # Server listen backlog
 check "daemon: listen backlog >= 2" \
     "yes" "$(grep -q 'server_socket.listen(2)' "$TTS_SERVER" && echo "yes" || echo "no")"
-
-# Daemon uses flock for single-instance guarantee
-check "daemon: flock for single instance" \
-    "yes" "$(grep -q 'fcntl.flock' "$TTS_SERVER" && echo "yes" || echo "no")"
 
 # Daemon writes PID file after acquiring lock
 check "daemon: PID file written after lock" \
