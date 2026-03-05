@@ -4767,12 +4767,21 @@ if type normalize_text &>/dev/null; then
         "a equals 2.518, c equals 4.183" \
         "$(normalize_text "a = 2.518(4), c = 4.183(2)")"
 
-    # Miller indices (3+ consecutive parenthesized numbers)
-    check "normalize: Miller indices digit-by-digit" \
-        "the (1 0 0), (0 0 2), (1 0 1) planes" \
-        "$(normalize_text "the (100), (002), (101) planes")"
+    # Miller indices
+    check "normalize: Miller leading zero" \
+        "the (0 0 2) peak" "$(normalize_text "the (002) peak")"
 
-    check "normalize: single parens not Miller" \
+    check "normalize: Miller context word after" \
+        "the (1 0 0) plane" "$(normalize_text "the (100) plane")"
+
+    check "normalize: Miller context word before" \
+        "plane (1 0 0) was observed" "$(normalize_text "plane (100) was observed")"
+
+    check "normalize: Miller series" \
+        "the (1 0 0), (0 0 2), (1 0 1)" \
+        "$(normalize_text "the (100), (002), (101)")"
+
+    check "normalize: Miller single no context" \
         "approximately (100) people" \
         "$(normalize_text "approximately (100) people")"
 
@@ -4798,6 +4807,32 @@ if type normalize_text &>/dev/null; then
 
     check "normalize: chained equals" \
         "a equals b equals 2.5" "$(normalize_text "a = b = 2.5")"
+
+    # Math operators
+    check "normalize: much less than" \
+        "x much less than 10" "$(normalize_text "x << 10")"
+
+    check "normalize: much greater than" \
+        "x much greater than 10" "$(normalize_text "x >> 10")"
+
+    check "normalize: tilde approximately" \
+        "approximately 10 nanometers" "$(normalize_text "~10 nm")"
+
+    # Set theory symbols
+    check "normalize: element of" \
+        "A in S" "$(normalize_text $'A \xe2\x88\x88 S')"
+
+    check "normalize: subset" \
+        "A subset of B" "$(normalize_text $'A \xe2\x8a\x82 B')"
+
+    check "normalize: intersection" \
+        "A intersection B" "$(normalize_text $'A \xe2\x88\xa9 B')"
+
+    check "normalize: union" \
+        "A union B" "$(normalize_text $'A \xe2\x88\xaa B')"
+
+    check "normalize: therefore" \
+        "therefore x" "$(normalize_text $'\xe2\x88\xb4 x')"
 else
     check "normalize: function not found" "yes" "no"
 fi

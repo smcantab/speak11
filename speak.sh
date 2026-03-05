@@ -176,10 +176,21 @@ t = re.sub(r'\u207b[\xb9\xb2\xb3\u2074-\u2079\u2070]+', lambda m: ' inverse' if 
 t = re.sub(r'[\xb9\xb2\xb3\u2074-\u2079\u2070\u00b9]+', '', t)
 # Uncertainty notation: 2.5179(4) -> 2.5179 (standard deviation in parens).
 t = re.sub(r'(\d\.\d+)\(\d+\)', r'\1', t)
-# Miller indices: 3+ consecutive parenthesized 1-3 digit numbers -> digit-by-digit.
-def _miller(m):
-    return re.sub(r'\((\d{1,3})\)', lambda d: '(' + ' '.join(d.group(1)) + ')', m.group())
-t = re.sub(r'\(\d{1,3}\)(?:\s*,\s*(?:and\s+)?\(\d{1,3}\)){2,}', _miller, t)
+# Miller indices: parenthesized digit groups read digit-by-digit.
+def _mill(m):
+    return '(' + ' '.join(m.group(1)) + ')'
+# Leading zeros are unambiguous: (002), (010) are never regular numbers.
+t = re.sub(r'\(0(\d{1,2})\)', lambda m: '(' + ' '.join('0'+m.group(1)) + ')', t)
+# Context words before or after expand remaining 3-digit parens.
+t = re.sub(r'\b(planes?|reflections?|peaks?|indexed|facets?|diffraction|surfaces?|Miller|directions?)\s+\((\d{3})\)',
+    lambda m: m.group(1) + ' (' + ' '.join(m.group(2)) + ')', t)
+t = re.sub(r'\((\d{3})\)\s+(planes?|reflections?|peaks?|indexed|facets?|diffraction|surfaces?|Miller|directions?)\b',
+    lambda m: '(' + ' '.join(m.group(1)) + ') ' + m.group(2), t)
+# Series of 2+ parenthesized digit groups (some may already be expanded).
+_MILL_PAREN = r'\(\d(?:\s?\d){0,2}\)'
+def _miller_series(m):
+    return re.sub(r'\((\d{1,3})\)', _mill, m.group())
+t = re.sub(_MILL_PAREN + r'(?:\s*,\s*(?:and\s+)?' + _MILL_PAREN + r'){1,}', _miller_series, t)
 # Bullet and list markers at line start.
 t = re.sub(r'^[\u2022\u2023\u25e6\u2043\u2219] +', '', t, flags=re.MULTILINE)
 t = re.sub(r'^- +', '', t, flags=re.MULTILINE)
@@ -201,8 +212,11 @@ _ABBR = {'Fig.':'Figure','Figs.':'Figures','fig.':'figure','figs.':'figures',
   'approx.':'approximately','vs.':'versus','e.g.':'for example','i.e.':'that is'}
 for _a,_w in sorted(_ABBR.items(), key=lambda x: -len(x[0])):
     t = t.replace(_a, _w)
-# Equals sign (TTS engines often skip bare =).
+# Math operators (TTS engines often skip or mispronounce these).
 t = re.sub(r' = ', ' equals ', t)
+t = re.sub(r' << ', ' much less than ', t)
+t = re.sub(r' >> ', ' much greater than ', t)
+t = t.replace('~', 'approximately ')
 
 # ── Phase 5: Scientific symbols and units ─────────────────────
 # Single-character symbols to spoken form.
@@ -222,6 +236,11 @@ _SYM = {
   '\u210f':' h-bar ', '\u2113':' liters ', '\u2030':' per mille ',
   '\u2220':' angle ', '\u2225':' parallel to ',
   '\u22a5':' perpendicular to ',
+  '\u2208':' in ', '\u2209':' not in ',
+  '\u2282':' subset of ', '\u2283':' superset of ',
+  '\u2286':' subset of ', '\u2287':' superset of ',
+  '\u2229':' intersection ', '\u222a':' union ',
+  '\u2234':' therefore ', '\u2235':' because ',
   '\u27e8':'', '\u27e9':''}  # mathematical angle brackets (Dirac bra-ket)
 for _s,_w in _SYM.items():
     t = t.replace(_s, _w)
