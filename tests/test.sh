@@ -5673,7 +5673,7 @@ This is **important**.')"
         "Just a normal sentence." \
         "$(normalize_text 'Just a normal sentence.')"
 
-    check "markdown: URL not detected as Markdown" \
+    check "markdown: plain URL not misdetected as Markdown" \
         "See for details." \
         "$(normalize_text 'See https://example.com for details.')"
 

@@ -129,8 +129,8 @@ def _frontend_markdown(t):
     t = re.sub(r'\[\[([^\]]+)\]\]', r'\1', t)               # [[target]]
 
     # ── M6: Text formatting ──
-    t = re.sub(r'\*\*([^*\n]+)\*\*', r'\1', t)      # bold
-    t = re.sub(r'__([^_\n]+)__', r'\1', t)           # bold (underscores)
+    t = re.sub(r'\*\*([^\n]+?)\*\*', r'\1', t)      # bold (allows nested *italic*)
+    t = re.sub(r'__([^\n]+?)__', r'\1', t)           # bold (underscores, allows nested _italic_)
     t = re.sub(r'\*([^ *\n][^*\n]*)\*', r'\1', t)    # italic (space after * = list marker, not italic)
     t = re.sub(r'(?<!\w)_([^_\n]+)_(?!\w)', r'\1', t)  # italic (underscores, word-boundary safe)
     t = re.sub(r'~~([^~]+)~~', r'\1', t)          # strikethrough
@@ -604,9 +604,17 @@ def _frontend_latex(t):
         'example': _env_theorem('Example'),
     }
 
-    # Math-internal environments: skip in L3, handled by _math_to_speech in L5.
+    # Math-internal environments: hide from L3 so _ENV_PAT can match outer
+    # envs, then restore for _math_to_speech in L5.
     _MATH_ENVS = {'pmatrix','bmatrix','Bmatrix','vmatrix','Vmatrix','matrix',
                   'pmatrix*','bmatrix*','cases','smallmatrix','array'}
+
+    # Temporarily replace \begin{pmatrix}/\end{pmatrix} with sentinels that
+    # don't contain \begin{, allowing _ENV_PAT to match through them.
+    for me in list(_MATH_ENVS):
+        esc = re.escape(me)
+        t = re.sub(r'\\begin\{' + esc + r'\}', '\x03BEGIN_' + me + '\x03', t)
+        t = re.sub(r'\\end\{' + esc + r'\}', '\x03END_' + me + '\x03', t)
 
     _ENV_PAT = re.compile(
         r'\\begin\{([a-zA-Z*]+)\}'
@@ -616,8 +624,6 @@ def _frontend_latex(t):
 
     def _replace_env(m):
         env_name = m.group(1)
-        if env_name in _MATH_ENVS:
-            return m.group(0)  # Leave for _math_to_speech
         optional = (m.group(2) or '').strip()
         content = m.group(3)
         label_m = re.search(r'\\label\{([^}]+)\}', content)
@@ -631,6 +637,11 @@ def _frontend_latex(t):
         if new_t == t:
             break
         t = new_t
+
+    # Restore math-internal env markers for L5 _math_to_speech.
+    for me in list(_MATH_ENVS):
+        t = t.replace('\x03BEGIN_' + me + '\x03', '\\begin{' + me + '}')
+        t = t.replace('\x03END_' + me + '\x03', '\\end{' + me + '}')
 
     # ── L4: Text macro expansion ──
     # Sectioning.
