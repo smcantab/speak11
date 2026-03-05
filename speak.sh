@@ -379,7 +379,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── Sentence splitter ────────────────────────────────────────────
 # Split text into sentences for streaming playback.
 split_sentences() {
-    "$VENV_PYTHON" -c "
+    [ -x "$VENV_PYTHON" ] && "$VENV_PYTHON" -c "
 import re, sys
 text = sys.stdin.read().rstrip('\n')
 try:
@@ -496,6 +496,10 @@ sys.stdout.write(d.decode().strip())
 
 run_local_tts() {
     local PY="${VENV_PYTHON}"
+    if [ ! -x "$PY" ]; then
+        echo "venv python not found at $PY" >> "$LOG_FILE" 2>/dev/null
+        return 1
+    fi
     {
         printf "\n[%s] run_local_tts\n" "$(date '+%Y-%m-%d %H:%M:%S')"
         echo "PY=$PY  VOICE=${LOCAL_VOICE:-bf_lily}  SPEED=$LOCAL_SPEED"
