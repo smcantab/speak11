@@ -137,11 +137,24 @@ t = t.replace('\u2026', '...')                          # ellipsis
 t = t.replace('\u201c','\x22').replace('\u201d','\x22') # smart double quotes
 t = t.replace('\u2018','\x27').replace('\u2019','\x27') # smart single quotes
 t = t.replace('\u00b7', ' ')                            # middle dot (kg-m)
-t = t.replace('\u2032','\x27').replace('\u2033','\x22') # prime / double prime
+# Arc-minutes/seconds in DMS notation (degree-minute-second context).
+# Full DMS: 30° 15′ 42″ or partial: 15′ 42″
+t = re.sub(r'(\d+)\u2032\s*(\d+)\u2033', r'\1 arc minutes \2 arc seconds', t)
+# Standalone after degree: 30° 15′
+t = re.sub(r'(\d+\u00b0\s*)(\d+)\u2032', lambda m: m.group(1) + m.group(2) + ' arc minutes', t)
+t = t.replace('\u2032','\x27').replace('\u2033','\x22') # remaining prime / double prime
 # Exotic whitespace to regular space.
 t = re.sub(r'[\u00a0\u2007\u2009\u200a\u202f\u205f]', ' ', t)
 # Unicode subscript digits to regular digits (chemistry: H₂O -> H2O).
 t = re.sub(r'[\u2080-\u2089]', lambda m: chr(ord(m.group())-0x2050), t)
+# Unicode fractions to words.
+_FRAC = {'\u00bd':'one half','\u2153':'one third','\u00bc':'one quarter',
+  '\u00be':'three quarters','\u2154':'two thirds','\u2155':'one fifth',
+  '\u2156':'two fifths','\u2157':'three fifths','\u2158':'four fifths',
+  '\u2159':'one sixth','\u215a':'five sixths','\u215b':'one eighth',
+  '\u215c':'three eighths','\u215d':'five eighths','\u215e':'seven eighths'}
+for _f,_w in _FRAC.items():
+    t = t.replace(_f, ' ' + _w + ' ')
 # Strip trailing whitespace on each line.
 t = re.sub(r'[ \t]+$', '', t, flags=re.MULTILINE)
 
@@ -154,22 +167,87 @@ t = re.sub(r'(?<![.!?:\x22\x27])\n', ' ', t)
 t = t.replace('\x00', '\n\n')
 
 # ── Phase 3: Noise removal ────────────────────────────────────
+# Chemical formulas (exact match lookup, before citation stripping).
+_CHEM = {
+  'H2O':'water','CO2':'carbon dioxide','NaCl':'sodium chloride',
+  'CH4':'methane','NH3':'ammonia','H2SO4':'sulfuric acid',
+  'HCl':'hydrochloric acid','NaOH':'sodium hydroxide',
+  'CaCO3':'calcium carbonate','Fe2O3':'iron oxide',
+  'C2H5OH':'ethanol','C6H12O6':'glucose','CH3OH':'methanol',
+  'KOH':'potassium hydroxide','HNO3':'nitric acid',
+  'Na2CO3':'sodium carbonate','MgO':'magnesium oxide',
+  'SiO2':'silicon dioxide','SO2':'sulfur dioxide',
+  'NO2':'nitrogen dioxide','O3':'ozone','N2O':'nitrous oxide',
+  'C2H2':'acetylene','C2H4':'ethylene','C3H8':'propane',
+  'ATP':'ATP','DNA':'DNA','RNA':'RNA'}
+_CHEM_RE = re.compile(r'\b(' + '|'.join(sorted(_CHEM, key=len, reverse=True)) + r')\b')
+t = _CHEM_RE.sub(lambda m: _CHEM[m.group()], t)
 # URLs and DOIs.
 t = re.sub(r'https?://\S+', '', t)
 t = re.sub(r'(?i)\bdoi:\s*\S+', '', t)
 # Citation references (scientific papers).
 # Bare citations glued to words: impacts1-8, results1,2,3, shown1.
-t = re.sub(r'(?<=[a-z])\d+(?:\s*[,\u2013\u2014-]\s*\d+)*(?=[\s.,;:?!\x27\x22)\]]|$)', '', t)
+# Require 4+ lowercase letters before AND a multi-ref pattern (comma/dash list)
+# to avoid stripping tech terms like sqlite3, numpy2, llama3.
+t = re.sub(r'(?<=[a-z]{4})\d+(?:\s*[,\u2013\u2014-]\s*\d+)+(?=[\s.,;:?!\x27\x22)\]]|$)', '', t)
 # Citations after abbreviation period: et al.1-8.
 t = re.sub(r'(?<=et al\.)\d+(?:\s*[,\u2013\u2014-]\s*\d+)*', '', t)
 # Bracketed refs: [1], [1,2,3], [1-8].
 t = re.sub(r'\s*\[\d+(?:\s*[,;\u2013\u2014-]\s*\d+)*\]\s*', ' ', t)
 # Parenthetical author-year: (Smith et al., 2020), (Smith 2020; Jones 2021).
 t = re.sub(r'\s*\((?:[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+[A-Z][a-z]+))?(?:,?\s*\d{4})\s*(?:;\s*[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+[A-Z][a-z]+))?(?:,?\s*\d{4})\s*)*)\)\s*', ' ', t)
-# Superscript minus+digit (Å⁻¹ -> inverse; before superscript stripping).
+# Scientific notation: 1.5 x 10^-3 spoken as full phrase.
+_SD = str.maketrans(
+    '\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079\u2070',
+    '1234567890')
+_SUP_RE = r'[\u00b9\u00b2\u00b3\u2074-\u2079\u2070]+'
+def _sci(m):
+    raw = m.group(2)
+    sign = '-' if '\u207b' in raw else ('-' if raw.startswith('-') else '')
+    d = raw.replace('\u207b','').replace('-','').translate(_SD)
+    try:
+        e = int(sign + d)
+    except ValueError:
+        return m.group()
+    p = m.group(1) + ' times ' if m.group(1) else ''
+    return p + '10 to the ' + ('negative ' if e < 0 else '') + str(abs(e))
+t = re.sub(r'(?:(\d[\d.,]*)\s*[' + '\u00d7' + r'xX]\s*)?\b10([\u207b' +
+    r'\u00b9\u00b2\u00b3\u2074-\u2079\u2070]+)', _sci, t)
+t = re.sub(r'(?:(\d[\d.,]*)\s*[' + '\u00d7' + r'xX]\s*)?\b10\^(-?\d+)',
+    _sci, t)
+# Isotope notation: superscript digits before element symbol.
+_ELEM = {
+  'H':'hydrogen','He':'helium','Li':'lithium','Be':'beryllium','B':'boron',
+  'C':'carbon','N':'nitrogen','O':'oxygen','F':'fluorine','Ne':'neon',
+  'Na':'sodium','Mg':'magnesium','Al':'aluminum','Si':'silicon',
+  'P':'phosphorus','S':'sulfur','Cl':'chlorine','Ar':'argon',
+  'K':'potassium','Ca':'calcium','Fe':'iron','Co':'cobalt','Ni':'nickel',
+  'Cu':'copper','Zn':'zinc','Se':'selenium','Br':'bromine','Kr':'krypton',
+  'Sr':'strontium','Mo':'molybdenum','Tc':'technetium','Ag':'silver',
+  'Cd':'cadmium','I':'iodine','Xe':'xenon','Cs':'cesium','Ba':'barium',
+  'La':'lanthanum','Ce':'cerium','Nd':'neodymium','Sm':'samarium',
+  'Eu':'europium','Gd':'gadolinium','Tb':'terbium','Dy':'dysprosium',
+  'Er':'erbium','Yb':'ytterbium','Lu':'lutetium','Hf':'hafnium',
+  'Ta':'tantalum','W':'tungsten','Re':'rhenium','Os':'osmium',
+  'Ir':'iridium','Pt':'platinum','Au':'gold','Hg':'mercury',
+  'Pb':'lead','Bi':'bismuth','Po':'polonium','Rn':'radon',
+  'Ra':'radium','Th':'thorium','U':'uranium','Np':'neptunium',
+  'Pu':'plutonium','Am':'americium'}
+def _isotope(m):
+    mass = m.group(1).translate(_SD)
+    sym = m.group(2)
+    return _ELEM.get(sym, sym) + '-' + mass
+t = re.sub(r'(?<!\w)(' + _SUP_RE + r')([A-Z][a-z]?)\b', _isotope, t)
+# Superscript minus+digit (cm^-1 -> inverse; before superscript expansion).
 t = re.sub(r'\u207b[\xb9\xb2\xb3\u2074-\u2079\u2070]+', lambda m: ' inverse' if m.start()>0 else 'inverse', t)
-# Remaining superscript digits.
-t = re.sub(r'[\xb9\xb2\xb3\u2074-\u2079\u2070\u00b9]+', '', t)
+# Remaining superscript digits -> spoken exponents.
+def _expand_sup(m):
+    digits = m.group().translate(_SD)
+    n = int(digits)
+    if n == 2: return ' squared '
+    if n == 3: return ' cubed '
+    return ' to the ' + str(n) + ' '
+t = re.sub(_SUP_RE, _expand_sup, t)
 # Uncertainty notation: 2.5179(4) -> 2.5179 (standard deviation in parens).
 t = re.sub(r'(\d\.\d+)\(\d+\)', r'\1', t)
 # Miller indices: parenthesized digit groups read digit-by-digit.
@@ -193,28 +271,72 @@ t = re.sub(r'^- +', '', t, flags=re.MULTILINE)
 t = re.sub(r'^\d+[.)]\s+', '', t, flags=re.MULTILINE)
 
 # ── Phase 4: Dash and punctuation normalization ───────────────
-t = re.sub(r' ?[\u2014\u2013] ?', ' -- ', t)  # em/en-dash
-t = re.sub(r' ?-{2,3} ?', ' -- ', t)           # ASCII double/triple dash
 t = re.sub(r'\.{4,}', '...', t)                # excessive dots
 t = re.sub(r'\?{2,}', '?', t)
 t = re.sub(r'!{2,}', '!', t)
-# Common academic abbreviations.
-_ABBR = {'Fig.':'Figure','Figs.':'Figures','fig.':'figure','figs.':'figures',
-  'Eq.':'Equation','Eqs.':'Equations','eq.':'equation','eqs.':'equations',
-  'Ref.':'Reference','Refs.':'References','ref.':'reference','refs.':'references',
-  'Sect.':'Section','sect.':'section','Ch.':'Chapter','ch.':'chapter',
-  'Vol.':'Volume','vol.':'volume','No.':'Number','no.':'number',
-  'Suppl.':'Supplementary','suppl.':'supplementary',
-  'approx.':'approximately','vs.':'versus','e.g.':'for example','i.e.':'that is'}
-for _a,_w in sorted(_ABBR.items(), key=lambda x: -len(x[0])):
-    t = t.replace(_a, _w)
+# Common academic abbreviations (word-boundary safe).
+# Plural-sensitive abbreviations (need lambda).
+_ABBR_PL = [
+  (re.compile(r'\bFigs?\.'), lambda m: 'Figures' if m.group().startswith('Figs') else 'Figure'),
+  (re.compile(r'\bfigs?\.'), lambda m: 'figures' if m.group().startswith('figs') else 'figure'),
+  (re.compile(r'\bEqs?\.'), lambda m: 'Equations' if m.group().startswith('Eqs') else 'Equation'),
+  (re.compile(r'\beqs?\.'), lambda m: 'equations' if m.group().startswith('eqs') else 'equation'),
+  (re.compile(r'\bRefs?\.'), lambda m: 'References' if m.group().startswith('Refs') else 'Reference'),
+  (re.compile(r'\brefs?\.'), lambda m: 'references' if m.group().startswith('refs') else 'reference'),
+  (re.compile(r'\bNo\.(?=\s*\d)'), 'Number'), (re.compile(r'\bno\.(?=\s*\d)'), 'number')]
+for _rx, _repl in _ABBR_PL:
+    t = _rx.sub(_repl, t)
+# Simple abbreviations: single alternation regex with dict lookup.
+_ABBR_D = {'Sect.':'Section','sect.':'section','Ch.':'Chapter','ch.':'chapter',
+  'Vol.':'Volume','vol.':'volume','Suppl.':'Supplementary','suppl.':'supplementary',
+  'approx.':'approximately','vs.':'versus','e.g.':'for example','i.e.':'that is',
+  'et al.':'et al','etc.':'et cetera','cf.':'compare','viz.':'namely',
+  'Dr.':'Doctor','Prof.':'Professor','Mr.':'Mister','Mrs.':'Misses','Ms.':'Ms',
+  'Sr.':'Senior','Jr.':'Junior','St.':'Saint','Mt.':'Mount'}
+_ABBR_RE = re.compile(r'\b(' + '|'.join(re.escape(k) for k in sorted(_ABBR_D, key=len, reverse=True)) + r')')
+t = _ABBR_RE.sub(lambda m: _ABBR_D[m.group()], t)
+# Journal abbreviations: strip trailing period (insurance for references).
+_JOUR = ['Nat','Commun','Phys','Rev','Lett','Proc','Natl','Acad',
+  'Sci','Chem','Soc','Am','Biol','Med','Eng','Mater','Appl','Opt',
+  'Mech','Res','Math','Stat','Astron','Astrophys','Geophys','Nucl',
+  'Mol','Cell','Genet','Biochem','Biophys','Environ','Technol','Pharmacol']
+_JOUR_RE = r'\b(' + '|'.join(_JOUR) + r')\.'
+t = re.sub(_JOUR_RE, r'\1', t)
+# Abbreviation+citation ranges: Figure 1-8 -> Figures 1 through 8.
+def _abbr_range(m):
+    _PLURALS = {'Figure':'Figures','Equation':'Equations','Reference':'References',
+      'Section':'Sections','Chapter':'Chapters','Number':'Numbers',
+      'figure':'figures','equation':'equations','reference':'references',
+      'section':'sections','chapter':'chapters','number':'numbers'}
+    label = _PLURALS.get(m.group(1), m.group(1))
+    return label + ' ' + m.group(2) + ' through ' + m.group(3)
+t = re.sub(r'\b(Figures?|Equations?|References?|Sections?|Chapters?|Numbers?|figures?|equations?|references?|sections?|chapters?|numbers?)\s*(\d+)\s*[-\u2013\u2014]\s*(\d+)', _abbr_range, t)
+# Numeric ranges: en-dash/em-dash between digits -> X to Y.
+# ASCII hyphen intentionally excluded (ambiguous: subtraction, CAS numbers).
+t = re.sub(r'(\d[\d.,]*)\s*[\u2013\u2014]\s*(\d[\d.,]*)', r'\1 to \2', t)
+# Remaining en/em-dash (pauses, asides).
+t = re.sub(r' ?[\u2014\u2013] ?', ' -- ', t)
+t = re.sub(r' ?-{2,3} ?', ' -- ', t)           # ASCII double/triple dash
 # Math operators (TTS engines often skip or mispronounce these).
+t = re.sub(r' <= ', ' less than or equal to ', t)
+t = re.sub(r' >= ', ' greater than or equal to ', t)
+t = re.sub(r' != ', ' not equal to ', t)
 t = re.sub(r' = ', ' equals ', t)
 t = re.sub(r' << ', ' much less than ', t)
 t = re.sub(r' >> ', ' much greater than ', t)
-t = t.replace('~', 'approximately ')
+t = re.sub(r'\s*~(?=\s?\d)', ' approximately ', t)
+t = re.sub(r'~(?!/)', ' ', t)                    # remaining tildes -> space (not ~/)
+# Compound percentage forms (before bare % rule).
+_PCT = {'wt':'percent by weight','vol':'percent by volume','at':'atomic percent','mol':'mole percent'}
+t = re.sub(r'(\d+(?:\.\d+)?)\s*(wt|vol|at|mol)\s*%', lambda m: m.group(1)+' '+_PCT[m.group(2)], t)
+# Percentage.
+t = re.sub(r'(\d+(?:\.\d+)?)\s*%', r'\1 percent', t)
+# DNA prime notation (5' -> 5 prime, 3' -> 3 prime).
+t = re.sub(r'\b([53])' + '\x27', r'\1 prime', t)
 
 # ── Phase 5: Scientific symbols and units ─────────────────────
+# Bra-ket notation: strip angle brackets, convert | to space inside.
+t = re.sub(r'\u27e8([^\u27e9]*)\u27e9', lambda m: m.group(1).replace('|', ' '), t)
 # Single-character symbols to spoken form.
 _SYM = {
   '\u00c5':' angstroms ', '\u212b':' angstroms ',
@@ -237,23 +359,33 @@ _SYM = {
   '\u2286':' subset of ', '\u2287':' superset of ',
   '\u2229':' intersection ', '\u222a':' union ',
   '\u2234':' therefore ', '\u2235':' because ',
-  '\u27e8':'', '\u27e9':''}  # mathematical angle brackets (Dirac bra-ket)
+  '\u2200':'for all ', '\u2203':'there exists ', '\u2204':'there does not exist ',
+  '\u00ac':' not ', '\u2227':' and ', '\u2228':' or ', '\u22bb':' xor ',
+  '\u2295':' direct sum ', '\u2297':' tensor product ',
+  '\u22c5':' dot ', '\u22c6':' star ',
+  '\u2020':' dagger ', '\u2021':' double dagger ',
+  '\u21d2':' implies ', '\u21d0':' is implied by ', '\u21d4':' if and only if ',
+  '\u27f9':' implies ', '\u27fa':' if and only if ',
+  '\u21a6':' maps to ',
+  '\u2191':' up ', '\u2193':' down ', '\u2195':' up and down ',
+  '\u2609':' solar '}
 for _s,_w in _SYM.items():
     t = t.replace(_s, _w)
 # Degree+letter units (must precede bare degree).
-t = re.sub(r'\u00b0C\b', 'degrees Celsius', t)
-t = re.sub(r'\u00b0F\b', 'degrees Fahrenheit', t)
-t = re.sub(r'\u00b0K\b', 'degrees Kelvin', t)
-t = re.sub(r'(?<=\d)\u00b0(?=\s|$|[.,;:?!])', ' degrees', t)
-# Micro prefix (µ followed by unit letter).
+t = re.sub(r'(?<=\d)\s*\u00b0C\b', ' degrees Celsius', t)
+t = re.sub(r'(?<=\d)\s*\u00b0F\b', ' degrees Fahrenheit', t)
+t = re.sub(r'(?<=\d)\s*\u00b0K\b', ' degrees Kelvin', t)
+t = re.sub(r'(?<=\d)\s*\u00b0(?=\s|$|[.,;:?!])', ' degrees', t)
+# Micro prefix: both µ (U+00B5 MICRO SIGN) and μ (U+03BC GREEK MU).
 _UUNIT = {'m':'meters','L':'liters','l':'liters','g':'grams','s':'seconds',
   'A':'amperes','V':'volts','W':'watts','F':'farads','H':'henrys','S':'siemens',
   'T':'teslas','Pa':'pascals','J':'joules','N':'newtons','K':'kelvins',
   'mol':'moles','Hz':'hertz','Ohm':'ohms','\u03a9':'ohms','M':'molar'}
-for _u,_w in sorted(_UUNIT.items(), key=lambda x: -len(x[0])):
-    t = t.replace('\u00b5'+_u, 'micro'+_w)
-if '\u00b5' in t:
-    t = re.sub(r'\u00b5(\w)', r'micro-\1', t)
+for _prefix in ('\u00b5', '\u03bc'):
+    for _u,_w in sorted(_UUNIT.items(), key=lambda x: -len(x[0])):
+        t = t.replace(_prefix+_u, 'micro'+_w)
+    if _prefix in t:
+        t = re.sub(re.escape(_prefix) + r'(\w)', r'micro-\1', t)
 # SI prefix+unit abbreviations after numbers (TTS mumbles these).
 _SI = {'GPa':'gigapascals','MPa':'megapascals','kPa':'kilopascals','hPa':'hectopascals',
   'GHz':'gigahertz','MHz':'megahertz','kHz':'kilohertz',
@@ -267,9 +399,34 @@ _SI = {'GPa':'gigapascals','MPa':'megapascals','kPa':'kilopascals','hPa':'hectop
   'kJ':'kilojoules','MJ':'megajoules',
   'mM':'millimolar','nM':'nanomolar','pM':'picomolar',
   'kDa':'kilodaltons','MDa':'megadaltons',
-  'mA':'milliamperes'}
-for _u,_w in sorted(_SI.items(), key=lambda x: -len(x[0])):
-    t = re.sub(r'(?<=\d)\s*' + _u + r'\b', ' ' + _w, t)
+  'mA':'milliamperes',
+  'TeV':'teraelectronvolts','meV':'millielectronvolts','eV':'electron volts',
+  'Hz':'hertz','Pa':'pascals','dB':'decibels','mol':'moles',
+  'Wb':'webers','Gy':'grays','Sv':'sieverts','Bq':'becquerels',
+  'ppmv':'parts per million by volume','ppbv':'parts per billion by volume',
+  'ppm':'parts per million','ppb':'parts per billion','ppt':'parts per trillion',
+  'Gpc':'gigaparsecs','Mpc':'megaparsecs','kpc':'kiloparsecs','pc':'parsecs',
+  'AU':'astronomical units',
+  'Gbp':'gigabase pairs','Mbp':'megabase pairs','kbp':'kilobase pairs',
+  'bp':'base pairs','nt':'nucleotides','Da':'daltons',
+  'rpm':'revolutions per minute',
+  'kcal':'kilocalories','cal':'calories',
+  'atm':'atmospheres','mbar':'millibars','bar':'bars',
+  'Torr':'torr','mmHg':'millimeters of mercury',
+  'K':'kelvins','V':'volts','W':'watts','J':'joules',
+  'L':'liters'}
+_SI_RE = re.compile(r'(?<=\d)\s*(' + '|'.join(sorted(_SI, key=len, reverse=True)) + r')\b')
+t = _SI_RE.sub(lambda m: ' ' + _SI[m.group(1)], t)
+# Unit separator: slash -> per, only after known expanded unit words.
+_UNIT_ENDS = sorted(set(w.split()[-1] for w in _SI.values()) |
+    set('micro'+w for w in _UUNIT.values()) |
+    {'m','s','g','A','N'},  # common base units not in _SI
+    key=len, reverse=True)
+_UNIT_SLASH_RE = re.compile(r'\b(' + '|'.join(re.escape(u) for u in _UNIT_ENDS) + r')/([a-zA-Z])')
+t = _UNIT_SLASH_RE.sub(r'\1 per \2', t)
+# Expand denominator units after per (e.g. per mL -> per milliliters).
+_SI_PER_RE = re.compile(r'(?<=per )(' + '|'.join(sorted(_SI, key=len, reverse=True)) + r')\b')
+t = _SI_PER_RE.sub(lambda m: _SI[m.group(1)], t)
 # Ohm: number + Ω (ftfy normalizes U+2126 to Greek omega).
 t = re.sub(r'(?<=\d)\s*[\u2126\u03a9](?=\s|$|[.,;:?!)])', ' ohms', t)
 # Greek letters via unicodedata (all 24, upper and lower).
@@ -282,6 +439,9 @@ def _greek(m):
         return ' ' + _GREEK_FIX.get(w, w) + ' '
     return c
 t = re.sub(r'[\u0391-\u03c9]', _greek, t)
+# Greek compound fix: alpha -helix -> alpha-helix after Greek expansion.
+_GK = 'alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|omicron|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega'
+t = re.sub(r'(\b(?:' + _GK + r'))\s+-\s*([a-z])', r'\1-\2', t, flags=re.IGNORECASE)
 # Roman numerals after labels (Section III -> Section 3).
 _R = {r: str(i) for i, r in enumerate(
     ['','I','II','III','IV','V','VI','VII','VIII','IX','X',
@@ -289,6 +449,12 @@ _R = {r: str(i) for i, r in enumerate(
 t = re.sub(
     r'\b(Section|Chapter|Part|Article|Item|Figure|Table|Act|Vol|No)(\s+)((?:X{0,3})(?:IX|IV|V?I{0,3}))\b',
     lambda m: m.group(1)+m.group(2)+_R.get(m.group(3),m.group(3)), t)
+# Oxidation states: (III) -> (3), (IV) -> (4), etc.
+_RV = '|'.join(sorted(_R.keys(), key=len, reverse=True))
+t = re.sub(r'\((' + _RV + r')\)', lambda m: '('+_R.get(m.group(1),m.group(1))+')', t)
+# Numbered protein complexes: Complex IV -> Complex 4.
+t = re.sub(r'\b(Complex|Subunit|Chain|Type|Class)\s+(' + _RV + r')\b',
+    lambda m: m.group(1)+' '+_R.get(m.group(2),m.group(2)), t)
 
 # ── Phase 6: Final cleanup ────────────────────────────────────
 t = re.sub(r' {2,}', ' ', t)                    # collapse multiple spaces

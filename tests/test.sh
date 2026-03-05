@@ -679,7 +679,7 @@ chmod +x "$_STUBS"/*
 # Test: 429 + both installed → silent fallback to local (no dialog)
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "429 + both installed → exits 0 (silent fallback)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
 check "429 + both → local TTS called as fallback" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 check "429 + both → no dialog shown (silent)" \
@@ -691,7 +691,7 @@ printf '#!/bin/bash\nexit 7\n' > "$_STUBS/curl"   # exit 7 = connection refused
 chmod +x "$_STUBS/curl"
 
 check_exit "network failure + both installed → exits 0 (silent fallback)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
 check "network failure + both → local TTS called as fallback" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 
@@ -722,7 +722,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "429 + both + local fails → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
 check "429 + both + local fails → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 
@@ -732,7 +732,7 @@ printf '#!/bin/bash\nexit 7\n' > "$_STUBS/curl"
 chmod +x "$_STUBS/curl"
 
 check_exit "network failure + both + local fails → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
 check "network failure + both + local fails → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 
@@ -993,7 +993,7 @@ chmod +x "$_STUBS"/*
 
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "auto + network failure → exits 0 (falls back)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
 check "auto + network failure → local TTS called" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 check "auto + network failure → no dialog (silent)" \
@@ -1013,7 +1013,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "auto + 429 → exits 0 (falls back)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
 check "auto + 429 → local TTS called" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 
@@ -1919,7 +1919,7 @@ check "speak.sh: sanitizes text with iconv before TTS" \
     "yes" "$(grep -q 'iconv -f UTF-8 -t UTF-8//IGNORE' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "speak.sh: iconv runs after reading text, before save" \
-    "yes" "$(awk '/Strip invalid Unicode/,/Save text for live/' "$SPEAK_SH" | grep -q 'iconv' && echo "yes" || echo "no")"
+    "yes" "$(awk '/Strip invalid Unicode/,/Save text for live/' "$SPEAK_SH" | grep 'iconv' >/dev/null 2>&1 && echo "yes" || echo "no")"
 
 check "iconv: preserves normal ASCII" \
     "Hello world" "$(printf 'Hello world' | iconv -f UTF-8 -t UTF-8//IGNORE)"
@@ -4362,9 +4362,9 @@ if type normalize_text &>/dev/null; then
     check "normalize: em dash from double hyphen" \
         "word -- word" "$(normalize_text "word -- word")"
 
-    # Footnote markers
-    check "normalize: strip superscript digits" \
-        "the study found" "$(normalize_text $'the study\xc2\xb9 found')"
+    # Superscript exponents (footnote markers now read as exponents)
+    check "normalize: superscript after word" \
+        "the study to the 1 found" "$(normalize_text $'the study\xc2\xb9 found')"
 
     check "normalize: strip bracketed reference numbers" \
         "the study found" "$(normalize_text "the study [1] found")"
@@ -4380,7 +4380,7 @@ if type normalize_text &>/dev/null; then
         "meteorite impacts." "$(normalize_text "meteorite impacts1-8.")"
 
     check "normalize: bare single citation" \
-        "was shown previously" "$(normalize_text "was shown previously1")"
+        "was shown previously1" "$(normalize_text "was shown previously1")"
 
     check "normalize: bare citation comma list" \
         "the results were" "$(normalize_text "the results1,2,3 were")"
@@ -4522,8 +4522,8 @@ if type normalize_text &>/dev/null; then
     check "normalize: perpendicular to" \
         "AB perpendicular to CD" "$(normalize_text $'AB \xe2\x8a\xa5 CD')"
 
-    check "normalize: prime to apostrophe" \
-        "5'" "$(normalize_text $'5\xe2\x80\xb2')"
+    check "normalize: prime to apostrophe then DNA prime" \
+        "5 prime" "$(normalize_text $'5\xe2\x80\xb2')"
 
     check "normalize: double prime to quote" \
         "5\"" "$(normalize_text $'5\xe2\x80\xb3')"
@@ -4643,19 +4643,19 @@ if type normalize_text &>/dev/null; then
 
     # Realistic PDF paragraph (combined artifacts)
     _PDF_INPUT=$'The infor-\nmation was presented in\nSection III of the docu-\nment. The results were\nstatistically significant.\n\nDr. Smith noted that the\ndata supports the hypothesis.'
-    _PDF_EXPECT=$'The information was presented in Section 3 of the document. The results were statistically significant.\n\nDr. Smith noted that the data supports the hypothesis.'
+    _PDF_EXPECT=$'The information was presented in Section 3 of the document. The results were statistically significant.\n\nDoctor Smith noted that the data supports the hypothesis.'
     check "normalize: realistic PDF paragraph" \
         "$_PDF_EXPECT" "$(normalize_text "$_PDF_INPUT")"
 
     # Subscript digits (chemistry: H₂O, CO₂)
     check "normalize: subscript digits H2O" \
-        "H2O" "$(normalize_text $'H\xe2\x82\x82O')"
+        "water" "$(normalize_text $'H\xe2\x82\x82O')"
 
     check "normalize: subscript digits CO2" \
-        "CO2" "$(normalize_text $'CO\xe2\x82\x82')"
+        "carbon dioxide" "$(normalize_text $'CO\xe2\x82\x82')"
 
     check "normalize: subscript digit range" \
-        "C6H12O6" "$(normalize_text $'C\xe2\x82\x86H\xe2\x82\x81\xe2\x82\x82O\xe2\x82\x86')"
+        "glucose" "$(normalize_text $'C\xe2\x82\x86H\xe2\x82\x81\xe2\x82\x82O\xe2\x82\x86')"
 
     # Middle dot (interpunct)
     check "normalize: middle dot to space" \
@@ -4667,14 +4667,14 @@ if type normalize_text &>/dev/null; then
 
     # Angle brackets (Dirac notation)
     check "normalize: angle brackets stripped" \
-        "psi|phi" "$(normalize_text $'\xe2\x9f\xa8psi|phi\xe2\x9f\xa9')"
+        "psi phi" "$(normalize_text $'\xe2\x9f\xa8psi|phi\xe2\x9f\xa9')"
 
-    # et al. bare citation
+    # et al. bare citation (et al. period removed by _ABBR, then citations stripped)
     check "normalize: et al. bare citation stripped" \
-        "Smith et al. showed" "$(normalize_text "Smith et al.1-8 showed")"
+        "Smith et al showed" "$(normalize_text "Smith et al.1-8 showed")"
 
     check "normalize: et al. bare citation en-dash" \
-        "Smith et al. showed" "$(normalize_text $'Smith et al.1\xe2\x80\x938 showed')"
+        "Smith et al showed" "$(normalize_text $'Smith et al.1\xe2\x80\x938 showed')"
 
     # Micro-prefix units
     check "normalize: micromolar" \
@@ -4710,9 +4710,9 @@ if type normalize_text &>/dev/null; then
     check "normalize: superscript inverse" \
         "cm inverse" "$(normalize_text $'cm\xe2\x81\xbb\xc2\xb9')"
 
-    # Superscript digits stripped (not inverse)
-    check "normalize: bare superscript stripped" \
-        "x" "$(normalize_text $'x\xc2\xb2')"
+    # Superscript digits expanded (not stripped)
+    check "normalize: superscript squared" \
+        "x squared" "$(normalize_text $'x\xc2\xb2')"
 
     # Space before punctuation cleanup
     check "normalize: no space before period" \
@@ -4833,6 +4833,441 @@ if type normalize_text &>/dev/null; then
 
     check "normalize: therefore" \
         "therefore x" "$(normalize_text $'\xe2\x88\xb4 x')"
+
+    # ── Abbreviation false positives (word-boundary safety) ──────
+    check "normalize: which. not corrupted" \
+        "which. is correct" "$(normalize_text "which. is correct")"
+
+    check "normalize: each. not corrupted" \
+        "each. of them" "$(normalize_text "each. of them")"
+
+    check "normalize: search. not corrupted" \
+        "search. found it" "$(normalize_text "search. found it")"
+
+    check "normalize: approach. not corrupted" \
+        "approach. was novel" "$(normalize_text "approach. was novel")"
+
+    check "normalize: piano. not corrupted" \
+        "the piano. was old" "$(normalize_text "the piano. was old")"
+
+    check "normalize: insect. not corrupted" \
+        "the insect. was tiny" "$(normalize_text "the insect. was tiny")"
+
+    check "normalize: She said no. preserved" \
+        "She said no. He agreed." "$(normalize_text "She said no. He agreed.")"
+
+    check "normalize: freq. not corrupted by eq." \
+        "freq. response" "$(normalize_text "freq. response")"
+
+    # ── Fig.1-8 / Ref.2-5 citation ranges ───────────────────────
+    check "normalize: Fig. 1-8 with range" \
+        "Figures 1 through 8" "$(normalize_text "Fig. 1-8")"
+
+    check "normalize: Figs.1-8 glued" \
+        "Figures 1 through 8" "$(normalize_text "Figs.1-8")"
+
+    check "normalize: Ref. 2-5" \
+        "References 2 through 5" "$(normalize_text "Ref. 2-5")"
+
+    check "normalize: Fig. 2 single" \
+        "Figure 2" "$(normalize_text "Fig. 2")"
+
+    check "normalize: Eq. 3 single" \
+        "Equation 3" "$(normalize_text "Eq. 3")"
+
+    # ── Bare citation false positives ────────────────────────────
+    check "normalize: log2 preserved" \
+        "log2 of the value" "$(normalize_text "log2 of the value")"
+
+    check "normalize: mp3 preserved" \
+        "mp3 file" "$(normalize_text "mp3 file")"
+
+    check "normalize: sha256 preserved" \
+        "sha256 algorithm" "$(normalize_text "sha256 algorithm")"
+
+    check "normalize: ipv4 preserved" \
+        "ipv4 addresses" "$(normalize_text "ipv4 addresses")"
+
+    # ── Tilde edge case ──────────────────────────────────────────
+    check "normalize: tilde before number is approximately" \
+        "approximately 10" "$(normalize_text "~10")"
+
+    check "normalize: tilde home path not mangled" \
+        "~/Documents" "$(normalize_text "~/Documents")"
+
+    # ── Superscript expansion (#1) ──────────────────────────────
+    check "normalize: superscript cubed" \
+        "x cubed" "$(normalize_text $'x\xc2\xb3')"
+
+    check "normalize: superscript to the N" \
+        "x to the 4" "$(normalize_text $'x\xe2\x81\xb4')"
+
+    check "normalize: E=mc2" \
+        "E equals mc squared" "$(normalize_text $'E = mc\xc2\xb2')"
+
+    check "normalize: nm squared" \
+        "5 nanometers squared" "$(normalize_text $'5 nm\xc2\xb2')"
+
+    # ── Scientific notation (#2) ────────────────────────────────
+    check "normalize: sci notation positive exponent" \
+        "6.02 times 10 to the 23" \
+        "$(normalize_text $'6.02 \xc3\x97 10\xc2\xb2\xc2\xb3')"
+
+    check "normalize: sci notation negative exponent" \
+        "1.5 times 10 to the negative 3" \
+        "$(normalize_text $'1.5 \xc3\x97 10\xe2\x81\xbb\xc2\xb3')"
+
+    check "normalize: sci notation bare" \
+        "10 to the 6 cells" \
+        "$(normalize_text $'10\xe2\x81\xb6 cells')"
+
+    check "normalize: sci notation caret" \
+        "2 times 10 to the negative 4" \
+        "$(normalize_text $'2 \xc3\x97 10^-4')"
+
+    # ── Isotope notation (#10) ──────────────────────────────────
+    check "normalize: uranium-238" \
+        "uranium-238" "$(normalize_text $'\xc2\xb2\xc2\xb3\xe2\x81\xb8U')"
+
+    check "normalize: carbon-12" \
+        "carbon-12" "$(normalize_text $'\xc2\xb9\xc2\xb2C')"
+
+    check "normalize: isotope not after word char" \
+        "x squared C" "$(normalize_text $'x\xc2\xb2C')"
+
+    # ── Greek mu micro-unit (#3) ────────────────────────────────
+    check "normalize: Greek mu micrometers" \
+        "5 micrometers" "$(normalize_text $'5 \xce\xbcm')"
+
+    check "normalize: Greek mu micrograms" \
+        "100 micrograms" "$(normalize_text $'100 \xce\xbcg')"
+
+    # ── Oxidation states (#11) ──────────────────────────────────
+    check "normalize: oxidation Fe(III)" \
+        "Fe(3)" "$(normalize_text 'Fe(III)')"
+
+    check "normalize: oxidation Cu(II)" \
+        "Cu(2)" "$(normalize_text 'Cu(II)')"
+
+    check "normalize: Complex IV" \
+        "Complex 4" "$(normalize_text 'Complex IV')"
+
+    # ── Numeric ranges (#12) ────────────────────────────────────
+    check "normalize: en-dash range" \
+        "5 to 10 nanometers" "$(normalize_text $'5\xe2\x80\x9310 nm')"
+
+    check "normalize: year range" \
+        "1990 to 2020" "$(normalize_text $'1990\xe2\x80\x932020')"
+
+    check "normalize: hyphen range digits" \
+        "pages 5-10" "$(normalize_text 'pages 5-10')"
+
+    # ── Unicode fractions (#14) ─────────────────────────────────
+    check "normalize: fraction half" \
+        "one half dose" "$(normalize_text $'\xc2\xbd dose')"
+
+    check "normalize: fraction three quarters" \
+        "three quarters of" "$(normalize_text $'\xc2\xbe of')"
+
+    # ── Abbreviations: et al., etc., Dr., Prof. (#8, #15) ──────
+    check "normalize: et al period removed" \
+        "Smith et al found" "$(normalize_text 'Smith et al. found')"
+
+    check "normalize: etc expansion" \
+        "iron, copper, et cetera" "$(normalize_text 'iron, copper, etc.')"
+
+    check "normalize: Dr expansion" \
+        "Doctor Smith" "$(normalize_text 'Dr. Smith')"
+
+    check "normalize: Prof expansion" \
+        "Professor Jones" "$(normalize_text 'Prof. Jones')"
+
+    check "normalize: Mr expansion" \
+        "Mister Brown" "$(normalize_text 'Mr. Brown')"
+
+    # ── Additional operators ────────────────────────────────────
+    check "normalize: less than or equal" \
+        "p less than or equal to 0.05" "$(normalize_text 'p <= 0.05')"
+
+    check "normalize: greater than or equal" \
+        "x greater than or equal to 10" "$(normalize_text 'x >= 10')"
+
+    check "normalize: not equal" \
+        "x not equal to 0" "$(normalize_text 'x != 0')"
+
+    # ── Logical/quantum symbols (#16, #17) ──────────────────────
+    check "normalize: for all" \
+        "for all x" "$(normalize_text $'\xe2\x88\x80x')"
+
+    check "normalize: there exists" \
+        "there exists y" "$(normalize_text $'\xe2\x88\x83y')"
+
+    check "normalize: implies arrow" \
+        "P implies Q" "$(normalize_text $'P \xe2\x87\x92 Q')"
+
+    check "normalize: iff arrow" \
+        "P if and only if Q" "$(normalize_text $'P \xe2\x87\x94 Q')"
+
+    check "normalize: dagger" \
+        "A dagger" "$(normalize_text $'A\xe2\x80\xa0')"
+
+    check "normalize: up arrow" \
+        "gene up" "$(normalize_text $'gene \xe2\x86\x91')"
+
+    check "normalize: down arrow" \
+        "expression down" "$(normalize_text $'expression \xe2\x86\x93')"
+
+    check "normalize: logical not" \
+        "not P" "$(normalize_text $'\xc2\xacP')"
+
+    check "normalize: logical and" \
+        "P and Q" "$(normalize_text $'P \xe2\x88\xa7 Q')"
+
+    check "normalize: logical or" \
+        "P or Q" "$(normalize_text $'P \xe2\x88\xa8 Q')"
+
+    check "normalize: direct sum" \
+        "A direct sum B" "$(normalize_text $'A \xe2\x8a\x95 B')"
+
+    check "normalize: tensor product" \
+        "A tensor product B" "$(normalize_text $'A \xe2\x8a\x97 B')"
+
+    check "normalize: maps to" \
+        "x maps to y" "$(normalize_text $'x \xe2\x86\xa6 y')"
+
+    check "normalize: dot product" \
+        "a dot b" "$(normalize_text $'a \xe2\x8b\x85 b')"
+
+    # ── ppm/ppb/ppt (#18) ──────────────────────────────────────
+    check "normalize: ppm" \
+        "10 parts per million" "$(normalize_text '10 ppm')"
+
+    check "normalize: ppb" \
+        "5 parts per billion" "$(normalize_text '5 ppb')"
+
+    # ── Base SI units (#13) ────────────────────────────────────
+    check "normalize: eV" \
+        "5 electron volts" "$(normalize_text '5 eV')"
+
+    check "normalize: Hz" \
+        "60 hertz" "$(normalize_text '60 Hz')"
+
+    check "normalize: bare Pa" \
+        "100 pascals" "$(normalize_text '100 Pa')"
+
+    check "normalize: dB" \
+        "20 decibels" "$(normalize_text '20 dB')"
+
+    check "normalize: K kelvins" \
+        "300 kelvins" "$(normalize_text '300 K')"
+
+    check "normalize: V volts" \
+        "1.5 volts" "$(normalize_text '1.5 V')"
+
+    check "normalize: W watts" \
+        "100 watts" "$(normalize_text '100 W')"
+
+    check "normalize: J joules" \
+        "4.2 joules" "$(normalize_text '4.2 J')"
+
+    check "normalize: mol" \
+        "2 moles" "$(normalize_text '2 mol')"
+
+    # ── Domain units (#25-27) ──────────────────────────────────
+    check "normalize: AU" \
+        "5 astronomical units" "$(normalize_text '5 AU')"
+
+    check "normalize: bp" \
+        "500 base pairs" "$(normalize_text '500 bp')"
+
+    check "normalize: atm" \
+        "1 atmospheres" "$(normalize_text '1 atm')"
+
+    check "normalize: kcal" \
+        "200 kilocalories" "$(normalize_text '200 kcal')"
+
+    check "normalize: rpm" \
+        "3000 revolutions per minute" "$(normalize_text '3000 rpm')"
+
+    check "normalize: Torr" \
+        "760 torr" "$(normalize_text '760 Torr')"
+
+    check "normalize: Da" \
+        "150 daltons" "$(normalize_text '150 Da')"
+
+    # ── Percentage (#24) ────────────────────────────────────────
+    check "normalize: percentage" \
+        "95 percent" "$(normalize_text '95%')"
+
+    check "normalize: percentage decimal" \
+        "99.9 percent" "$(normalize_text '99.9%')"
+
+    # ── Greek compound spacing (#21) ────────────────────────────
+    check "normalize: alpha-helix" \
+        "alpha-helix" "$(normalize_text $'\xce\xb1-helix')"
+
+    check "normalize: beta-sheet" \
+        "beta-sheet" "$(normalize_text $'\xce\xb2-sheet')"
+
+    # ── DNA prime (#30) ─────────────────────────────────────────
+    check "normalize: 5 prime end" \
+        "5 prime end" "$(normalize_text "5' end")"
+
+    check "normalize: 3 prime end" \
+        "3 prime end" "$(normalize_text "3' end")"
+
+    # ── Remaining tilde to space (#22) ──────────────────────────
+    check "normalize: tilde non-numeric becomes space" \
+        "Smith (2020)" "$(normalize_text 'Smith~(2020)')"
+
+    # ── Citation regex: tech terms with 4+ lowercase (#4 residual) ──
+    check "normalize: sqlite3 preserved" \
+        "sqlite3 database" "$(normalize_text 'sqlite3 database')"
+
+    check "normalize: numpy2 preserved" \
+        "numpy2 release" "$(normalize_text 'numpy2 release')"
+
+    check "normalize: llama3 preserved" \
+        "llama3 model" "$(normalize_text 'llama3 model')"
+
+    check "normalize: bare citation still stripped" \
+        "results showed" "$(normalize_text 'results1,2,3 showed')"
+
+    # ── Chemical formula lookup table (#5) ──────────────────────
+    check "normalize: H2O to water" \
+        "water" "$(normalize_text 'H2O')"
+
+    check "normalize: CO2 to carbon dioxide" \
+        "carbon dioxide emissions" "$(normalize_text 'CO2 emissions')"
+
+    check "normalize: NaCl to sodium chloride" \
+        "sodium chloride" "$(normalize_text 'NaCl')"
+
+    check "normalize: CH4 to methane" \
+        "methane" "$(normalize_text 'CH4')"
+
+    check "normalize: Fe2O3 to iron oxide" \
+        "iron oxide" "$(normalize_text 'Fe2O3')"
+
+    check "normalize: unknown formula untouched" \
+        "CaMKII" "$(normalize_text 'CaMKII')"
+
+    # ── Pipe character to space (#19) ────────────────────────────
+    check "normalize: pipe to space" \
+        "psi H phi" "$(normalize_text $'\xe2\x9f\xa8\xcf\x88|H|\xcf\x86\xe2\x9f\xa9')"
+
+    # ── Journal abbreviations (#28 insurance) ───────────────────
+    check "normalize: Nat. period removed" \
+        "Nat Commun" "$(normalize_text 'Nat. Commun.')"
+
+    check "normalize: Phys. Rev. Lett." \
+        "Phys Rev Lett" "$(normalize_text 'Phys. Rev. Lett.')"
+
+    check "normalize: Proc. Natl. Acad. Sci." \
+        "Proc Natl Acad Sci" "$(normalize_text 'Proc. Natl. Acad. Sci.')"
+
+    # ── Unit separator: slash to per ────────────────────────────
+    check "normalize: mg/mL to per" \
+        "5 milligrams per milliliters" "$(normalize_text '5 mg/mL')"
+
+    check "normalize: m/s to per" \
+        "10 m per s" "$(normalize_text '10 m/s')"
+
+    check "normalize: km/h" \
+        "100 kilometers per h" "$(normalize_text '100 km/h')"
+
+    check "normalize: URL slash not affected" \
+        "see" "$(normalize_text 'see https://example.com/path')"
+
+    # ── R1: CAS numbers preserved ────────────────────────────────
+    check "normalize: CAS water preserved" \
+        "CAS 7732-18-5" "$(normalize_text 'CAS 7732-18-5')"
+
+    check "normalize: CAS ethanol preserved" \
+        "CAS 64-17-5" "$(normalize_text 'CAS 64-17-5')"
+
+    # ── R2: Math subtraction not converted to range ──────────────
+    check "normalize: subtraction 5-3" \
+        "5-3 equals 2" "$(normalize_text '5-3 = 2')"
+
+    check "normalize: negative inline math" \
+        "n equals 10-5 equals 5" "$(normalize_text 'n = 10-5 = 5')"
+
+    # ── R3: Tilde does not swallow adjacent chars ────────────────
+    check "normalize: T~300K spacing" \
+        "T approximately 300 kelvins" "$(normalize_text 'T~300K')"
+
+    check "normalize: pH~7.4 spacing" \
+        "pH approximately 7.4" "$(normalize_text 'pH~7.4')"
+
+    # ── R4: wt%/vol%/at%/mol% expanded ──────────────────────────
+    check "normalize: wt% expanded" \
+        "20 percent by weight" "$(normalize_text '20 wt%')"
+
+    check "normalize: vol% expanded" \
+        "5 percent by volume" "$(normalize_text '5 vol%')"
+
+    check "normalize: at% expanded" \
+        "10 atomic percent" "$(normalize_text '10 at%')"
+
+    check "normalize: mol% expanded" \
+        "15 mole percent" "$(normalize_text '15 mol%')"
+
+    # ── G3: Uppercase X in scientific notation ───────────────────
+    check "normalize: uppercase X sci notation" \
+        "1.5 times 10 to the 6" "$(normalize_text $'1.5 X 10\xe2\x81\xb6')"
+
+    # ── G4: Superscript trailing space ───────────────────────────
+    check "normalize: electron config spacing" \
+        "1s squared 2s squared 2p to the 6" "$(normalize_text $'1s\xc2\xb22s\xc2\xb22p\xe2\x81\xb6')"
+
+    check "normalize: x squared y spacing" \
+        "x squared y" "$(normalize_text $'x\xc2\xb2y')"
+
+    # ── G6: au removed from SI (ambiguous) ───────────────────────
+    check "normalize: au not expanded" \
+        "5 au" "$(normalize_text '5 au')"
+
+    # ── G8: Arc-minutes and arc-seconds (DMS context) ──────────
+    check "normalize: arc min+sec pair" \
+        "15 arc minutes 42 arc seconds" "$(normalize_text $'15\xe2\x80\xb2 42\xe2\x80\xb3')"
+
+    check "normalize: degrees minutes seconds" \
+        "30 degrees 15 arc minutes 42 arc seconds" \
+        "$(normalize_text $'30\xc2\xb0 15\xe2\x80\xb2 42\xe2\x80\xb3')"
+
+    check "normalize: standalone prime unchanged" \
+        "5 prime" "$(normalize_text $'5\xe2\x80\xb2')"
+
+    # ── Cross-field robustness ───────────────────────────────────
+    check "normalize: plain English passthrough" \
+        "The quick brown fox jumped over the lazy dog." \
+        "$(normalize_text 'The quick brown fox jumped over the lazy dog.')"
+
+    check "normalize: filesystem path preserved" \
+        "/usr/local/bin is in PATH" \
+        "$(normalize_text '/usr/local/bin is in PATH')"
+
+    check "normalize: shell pipe preserved" \
+        "ls -la | grep foo" \
+        "$(normalize_text 'ls -la | grep foo')"
+
+    check "normalize: finance percent" \
+        "The index fell 2.3 percent." \
+        "$(normalize_text 'The index fell 2.3%.')"
+
+    check "normalize: tech terms preserved" \
+        "Install sqlite3 and numpy2 via pip." \
+        "$(normalize_text 'Install sqlite3 and numpy2 via pip.')"
+
+    check "normalize: CAS number preserved" \
+        "CAS 7732-18-5" "$(normalize_text 'CAS 7732-18-5')"
+
+    check "normalize: math subtraction preserved" \
+        "10-5 equals 5" "$(normalize_text '10-5 = 5')"
+
+    check "normalize: music notation passthrough" \
+        "Op. 13 in C major" "$(normalize_text 'Op. 13 in C major')"
 else
     check "normalize: function not found" "yes" "no"
 fi
