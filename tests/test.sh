@@ -5830,6 +5830,15 @@ title: t
 * First item
 * Second item')"
 
+    check "markdown: italic inside star-list preserved" \
+        "Title: Test. Something emphasized here" \
+        "$(normalize_text '---
+title: t
+---
+
+# Test
+* Something *emphasized* here')"
+
     check "markdown: underscores in technical identifiers preserved" \
         "Title: Test. The signal_to_noise_ratio and p_value are important." \
         "$(normalize_text '---

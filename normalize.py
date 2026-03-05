@@ -131,7 +131,7 @@ def _frontend_markdown(t):
     # ── M6: Text formatting ──
     t = re.sub(r'\*\*([^*\n]+)\*\*', r'\1', t)      # bold
     t = re.sub(r'__([^_\n]+)__', r'\1', t)           # bold (underscores)
-    t = re.sub(r'\*([^*\n]+)\*', r'\1', t)           # italic
+    t = re.sub(r'\*([^ *\n][^*\n]*)\*', r'\1', t)    # italic (space after * = list marker, not italic)
     t = re.sub(r'(?<!\w)_([^_\n]+)_(?!\w)', r'\1', t)  # italic (underscores, word-boundary safe)
     t = re.sub(r'~~([^~]+)~~', r'\1', t)          # strikethrough
     t = re.sub(r'`([^`]+)`', r'\1', t)            # inline code
@@ -270,7 +270,7 @@ _SI_UNIT_TEX = {'meter':'meter','metre':'meter','gram':'gram','second':'second',
     'liter':'liter','litre':'liter','ampere':'ampere','mole':'mole',
     'candela':'candela','tesla':'tesla','farad':'farad','henry':'henry',
     'siemens':'siemens','becquerel':'becquerel','gray':'gray',
-    'sievert':'sievert','weber':'weber','electronvolt':'electron volt',
+    'sievert':'sievert','weber':'weber','electronvolt':'electronvolt',
     'bar':'bar','angstrom':'angstrom','degree':'degree'}
 
 def _math_to_speech(expr):
@@ -665,9 +665,15 @@ def _frontend_latex(t):
     def _si_handler(m):
         val = m.group(1)
         unit = m.group(2)
-        # Value e-notation.
-        val = re.sub(r'(\d+\.?\d*)[eE]([+-]?\d+)',
-            lambda em: em.group(1) + ' times 10 to the ' + em.group(2), val)
+        # Value e-notation (use "negative N" not "-N" for unambiguous TTS).
+        def _enotation(em):
+            exp = em.group(2)
+            if exp.startswith('-'):
+                exp = 'negative ' + exp[1:]
+            elif exp.startswith('+'):
+                exp = exp[1:]
+            return em.group(1) + ' times 10 to the ' + exp
+        val = re.sub(r'(\d+\.?\d*)[eE]([+-]?\d+)', _enotation, val)
         val = val.replace('\\pm', ' plus or minus ')
         return val + ' ' + _siunitx_expand(unit, value=m.group(1))
     t = re.sub(r'\\SI\{([^}]+)\}\{([^}]+)\}', _si_handler, t)
