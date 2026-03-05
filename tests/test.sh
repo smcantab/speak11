@@ -1721,7 +1721,7 @@ g2p = G2P(trf=False, british=True, fallback=fb)
 _, tokens = g2p('David Frum said hello.')
 dropped = [t.text for t in tokens if t.phonemes is None and t.text.strip() not in '.,;:!?']
 print('dropped:' + ','.join(dropped) if dropped else 'ok')
-" 2>/dev/null)
+" 2>/dev/null) || true
     [ "$_oov_result" = "ok" ] && _oov_ok="yes"
     check "OOV proper nouns phonemized (not dropped)" "yes" "$_oov_ok"
 fi

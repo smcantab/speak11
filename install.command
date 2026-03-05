@@ -19,6 +19,11 @@ WORKFLOW_NAME="Speak Selection.workflow"
 _IS_TERMINAL_APP=false
 [ "$TERM_PROGRAM" = "Apple_Terminal" ] && _IS_TERMINAL_APP=true
 
+# Keep Terminal in front during installation (behind dialogs, which are modal).
+_focus_terminal() {
+    $_IS_TERMINAL_APP && osascript -e 'tell application "Terminal" to activate' 2>/dev/null || true
+}
+
 # ── Single-instance guard ─────────────────────────────────────────
 _LOCKDIR="/tmp/speak11_install.lock"
 if ! mkdir "$_LOCKDIR" 2>/dev/null; then
@@ -88,6 +93,7 @@ unspin() {
 # ── Welcome ───────────────────────────────────────────────────────
 result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Copy the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS for free offline use (Apple Silicon)" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null || true)
 [ "$result" = "Quit" ] && exit 0
+_focus_terminal
 
 # ── Architecture detection ───────────────────────────────────────
 IS_ARM64=false
@@ -98,6 +104,7 @@ BACKEND_CHOICE="ElevenLabs Only"
 if $IS_ARM64; then
     BACKEND_CHOICE=$(osascript -e 'button returned of (display dialog "Choose your TTS backend:" & return & return & "• ElevenLabs Only — cloud API" & return & "• Both — ElevenLabs + local fallback" & return & "• Local Only — free, runs on your Mac" with title "Speak11" buttons {"ElevenLabs Only", "Both", "Local Only"} default button "Both" with icon note)' 2>/dev/null || true)
     [ -z "$BACKEND_CHOICE" ] && BACKEND_CHOICE="ElevenLabs Only"
+    _focus_terminal
 fi
 
 # ── API Key ──────────────────────────────────────────────────────
@@ -142,6 +149,7 @@ elif [ "$BACKEND_CHOICE" = "Both" ]; then
     prompt_api_key \
         "Paste your ElevenLabs API key:\\n\\nThe key needs Text-to-Speech and User Read permissions.\\n\\nSkip to use local TTS only when ElevenLabs is unavailable." \
         "Skip" || true
+    _focus_terminal
 else
     # ElevenLabs Only (or Intel — same thing)
     if ! prompt_api_key \
@@ -150,10 +158,12 @@ else
         osascript -e 'display dialog "No API key entered. Installation cancelled." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null || true
         exit 1
     fi
+    _focus_terminal
 fi
 
 # ── Settings app choice (ask before work begins) ─────────────────
 settings_result=$(osascript -e 'button returned of (display dialog "Install the Speak11 app?\n\nAdds a waveform icon to your menu bar to change voice, model, and speed without editing any files." with title "Speak11" buttons {"Skip", "Install"} default button "Install" with icon note)' 2>/dev/null || true)
+_focus_terminal
 
 header
 
@@ -200,6 +210,7 @@ if [ -z "$_clt_major" ] || [ "$_clt_major" != "$_os_major" ]; then
             :
         fi
         unspin
+        _focus_terminal
     fi
 
     rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress 2>/dev/null || true
@@ -220,6 +231,7 @@ fi
 if ! xcrun swiftc --version >/dev/null 2>&1; then
     if [ -x /Library/Developer/CommandLineTools/usr/bin/swiftc ]; then
         osascript -e 'do shell script "xcode-select --switch /Library/Developer/CommandLineTools" with prompt "Speak11 needs to configure the Swift compiler." with administrator privileges' 2>>"$_LOG_FILE" || true
+        _focus_terminal
     fi
 fi
 
@@ -244,6 +256,7 @@ if $IS_ARM64 && [ "$BACKEND_CHOICE" != "ElevenLabs Only" ]; then
             exit 1
         else
             osascript -e "display dialog \"Could not install local TTS.\n\n${_mlx_err:-Check your internet connection.}\n\nElevenLabs will be used instead.\nFull log: ~/.local/share/speak11/install.log\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon caution" 2>/dev/null || true
+            _focus_terminal
         fi
     fi
 fi
@@ -583,6 +596,7 @@ if [ "$settings_result" = "Install" ]; then
         _swift_ver=$(xcrun swiftc --version 2>/dev/null | head -1 || echo "swiftc not found")
         printf '  Swift: %s\n' "$_swift_ver" >> "$_LOG_FILE"
         osascript -e "display dialog \"Could not compile the settings app.\n\n${_swift_err:-Unknown error.}\n\nTry updating Xcode Command Line Tools:\n  sudo rm -rf /Library/Developer/CommandLineTools\n  xcode-select --install\n\nFull log: ~/.local/share/speak11/install.log\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon caution" 2>/dev/null || true
+        _focus_terminal
     else
         step "App compiled"
 
@@ -670,6 +684,7 @@ SWIFT_END
             if [ "$login_result" = "Yes" ]; then
                 osascript -e "tell application \"System Events\" to make login item at end with properties {path:\"$APP_BUNDLE\", hidden:true}" 2>/dev/null || true
             fi
+            _focus_terminal
         fi
 
         open "$APP_BUNDLE" || true
