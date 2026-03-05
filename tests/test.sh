@@ -5552,6 +5552,10 @@ $a_i + b_{jk}$')"
         "the matrix with rows: a, b; c, d" \
         "$(normalize_text '$\begin{pmatrix} a & b \\ c & d \end{pmatrix}$')"
 
+    check "latex: matrix inside equation environment" \
+        "The equation: A equals the matrix with rows: 1, 0; 0, 1." \
+        "$(normalize_text '\begin{equation} A = \begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix} \end{equation}')"
+
     check "latex: cases" \
         "cases: x, if x greater than or equal to 0; -x, otherwise" \
         "$(normalize_text '$\begin{cases} x & \text{if } x \geq 0 \\ -x & \text{otherwise} \end{cases}$')"
@@ -6203,6 +6207,10 @@ if type normalize_text &>/dev/null; then
     check_backend "alpha with tonos diacritic" \
         "The alpha value." \
         "$(_u 'The \u03ac value.')"
+
+    check_backend "final sigma spoken as sigma" \
+        "The sigma value." \
+        "$(_u 'The \u03c2 value.')"
 
     check_backend "beta letter" \
         "The beta value." \

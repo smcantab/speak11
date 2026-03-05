@@ -516,16 +516,22 @@ def _frontend_latex(t):
         def handler(name, opt, content, label):
             return msg
         return handler
+    def _restore_math_sentinels(text):
+        """Restore \\x03 sentinels to \\begin{env}/\\end{env} for _math_to_speech."""
+        for me in _MATH_ENVS:
+            text = text.replace('\x03BEGIN_' + me + '\x03', '\\begin{' + me + '}')
+            text = text.replace('\x03END_' + me + '\x03', '\\end{' + me + '}')
+        return text
     def _env_equation():
         def handler(name, opt, content, label):
-            spoken = _math_to_speech(content)
+            spoken = _math_to_speech(_restore_math_sentinels(content))
             if label:
                 return 'Equation ' + label + ': ' + spoken + '.'
             return 'The equation: ' + spoken + '.'
         return handler
     def _env_align():
         def handler(name, opt, content, label):
-            lines = re.split(r'\\\\', content)
+            lines = re.split(r'\\\\', _restore_math_sentinels(content))
             parts = []
             for line in lines:
                 line = re.sub(r'&', ' ', line).strip()
@@ -1054,10 +1060,10 @@ def _phaseC(t):
         c = m.group(0)
         n = _ud.name(c, '')
         if 'GREEK' in n and 'LETTER' in n:
-            # Strip modifiers: "GREEK SMALL LETTER ALPHA WITH TONOS" -> take word before "WITH"
+            # Last word before "WITH" (or last word): FINAL SIGMA -> sigma, ALPHA WITH TONOS -> alpha
             parts = n.split()
-            idx = parts.index('LETTER') + 1 if 'LETTER' in parts else -1
-            w = parts[idx].lower() if idx < len(parts) else parts[-1].lower()
+            with_idx = parts.index('WITH') if 'WITH' in parts else len(parts)
+            w = parts[with_idx - 1].lower()
             return ' ' + _GREEK_FIX.get(w, w) + ' '
         return c
     t = re.sub(r'[\u0391-\u03c9]', _greek, t)
