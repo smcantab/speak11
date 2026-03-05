@@ -578,10 +578,10 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
     lambda spelling fix), Roman numerals after labels (Section IV to Section 4).
     **Phase 6 -- Final cleanup:** multi-space collapsing, space-before-punctuation
     removal, space-after-opening-bracket removal.
-    Uses `printf '%s'` pipe (not `<<<`) to avoid trailing newline. ftfy
-    requires pip install in the venv; the pipeline gracefully skips it if
-    unavailable. Do not duplicate features already handled natively by TTS
-    engines (e.g., ASCII abbreviations like km, eV, DNA).
+    Uses `printf '%s'` pipe (not `<<<`) to avoid trailing newline. ftfy is a
+    required dependency (installed in the venv by both install.command and
+    install-local.sh). Do not duplicate features already handled natively by
+    TTS engines (e.g., ASCII abbreviations like km, eV, DNA).
 
 26. **API key is validated on entry.** Both `install.command` and
     `Speak11Settings.swift` validate the API key by calling

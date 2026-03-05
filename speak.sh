@@ -116,17 +116,13 @@ normalize_text() {
     local result
     if command -v "$py" >/dev/null 2>&1 && \
        result=$(printf '%s' "$1" | "$py" -c "
-import re, sys, unicodedata as _ud
+import re, sys, unicodedata as _ud, ftfy
 
 t = sys.stdin.read()
 
 # ── Phase 1: Encoding and character normalization ─────────────
 # Fix mojibake (UTF-8 bytes misread as Latin-1/Windows-1252).
-try:
-    import ftfy
-    t = ftfy.fix_text(t)
-except ImportError:
-    pass
+t = ftfy.fix_text(t)
 # Line endings: CRLF and stray CR to LF.
 t = t.replace('\r\n', '\n').replace('\r', '\n')
 # Invisible characters: zero-width, soft hyphens, PUA (math font garbage).
