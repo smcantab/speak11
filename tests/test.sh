@@ -1505,7 +1505,7 @@ check "§14: uninstall.command copied to install dir" \
 # §16: Login item check before adding (no duplicates)
 check "§16: login item checked before adding" \
     "yes" "$(grep -q 'login item.*Speak11\|every login item' "$SCRIPT_DIR/install.command" \
-        | head -1 && grep 'login item' "$SCRIPT_DIR/install.command" | grep -q 'get\|name of\|count\|exists' && echo "yes" || echo "no")"
+        && grep 'login item' "$SCRIPT_DIR/install.command" | grep -q 'get\|name of\|count\|exists' && echo "yes" || echo "no")"
 
 # §4 simulation: mkdir lock atomicity
 _LOCKDIR=$(mktemp -d)/speak11_install.lock
@@ -1953,7 +1953,7 @@ check "speak.sh: unmutes system audio on confirmation" \
     "yes" "$(grep -q 'set volume without output muted' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "speak.sh: mute check exits on Cancel" \
-    "yes" "$(grep -q 'exit 0' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(awk '/MUTE_CHECKED/,/exit 0/' "$SPEAK_SH" | grep -q 'exit 0' && echo "yes" || echo "no")"
 
 # ── 39. Sentence-by-sentence generation ──────────────────────────
 
@@ -2501,8 +2501,8 @@ check "curl has --max-time for timeout protection" \
     "yes" "$(awk '/^run_elevenlabs_tts/,/^}/' "$SPEAK_SH" | grep -q 'max-time' && echo "yes" || echo "no")"
 
 # Mid-stream cloud failure stops silently (no dialog)
-check "cloud TTS failure: breaks without dialog" \
-    "yes" "$(awk '/run_elevenlabs_tts/,/break/' "$SPEAK_SH" | grep -qv 'osascript' && echo "yes" || echo "no")"
+check "cloud TTS HTTP error: shows dialog" \
+    "yes" "$(awk '/HTTP_CODE.*!=.*200/,/osascript/' "$SPEAK_SH" | grep -q 'osascript' && echo "yes" || echo "no")"
 
 # Fallback: network failure with both backends → tries local
 check "network failure + both: runs run_local_tts" \
@@ -4882,6 +4882,10 @@ if type normalize_text &>/dev/null; then
         "2 times 10 to the negative 4" \
         "$(normalize_text $'2 \xc3\x97 10^-4')"
 
+    check "normalize: superscript negative 2 (not just inverse)" \
+        "cm to the negative 2" \
+        "$(normalize_text $'cm\xe2\x81\xbb\xc2\xb2')"
+
     # ── Isotope notation (#10) ──────────────────────────────────
     check "normalize: uranium-238" \
         "uranium-238" "$(normalize_text $'\xc2\xb2\xc2\xb3\xe2\x81\xb8U')"
@@ -5174,9 +5178,12 @@ if type normalize_text &>/dev/null; then
     check "normalize: mol% expanded" \
         "15 mole percent" "$(normalize_text '15 mol%')"
 
-    # ── G3: Uppercase X in scientific notation ───────────────────
+    # ── G3: Scientific notation variants ───────────────────
     check "normalize: uppercase X sci notation" \
         "1.5 times 10 to the 6" "$(normalize_text $'1.5 X 10\xe2\x81\xb6')"
+
+    check "normalize: 3x10^5 no-space ASCII" \
+        "3 times 10 to the 5" "$(normalize_text '3x10^5')"
 
     # ── G4: Superscript trailing space ───────────────────────────
     check "normalize: electron config spacing" \
@@ -5392,6 +5399,12 @@ c & d
 For all $x \in \mathbb{R}$, $f(x)$ is continuous.
 \end{theorem}')"
 
+    check "latex: escaped dollar in env not treated as math" \
+        'Theorem. The price is $5 to $10 per unit.' \
+        "$(normalize_text '\begin{theorem}
+The price is \$5 to \$10 per unit.
+\end{theorem}')"
+
     check "latex: tikzpicture skipped" \
         "Before. Diagram omitted. After." \
         "$(normalize_text 'Before.
@@ -5475,6 +5488,19 @@ He said --- hello --- and left. Pages 5--10.')"
     check "latex: nested fraction" \
         "1 over 1 plus x over y" \
         "$(normalize_text '$\frac{1}{1 + \frac{x}{y}}$')"
+
+    check "latex: cfrac continued fraction" \
+        "a plus b over c plus d" \
+        "$(normalize_text '$\cfrac{a+b}{c+d}$')"
+
+    check "latex: left langle right rangle delimiters" \
+        "psi | phi" \
+        "$(normalize_text '$\left\langle \psi | \phi \right\rangle$')"
+
+    check "latex: chained equals" \
+        "Section: Test. a equals b equals c" \
+        "$(normalize_text '\section{Test}
+$a=b=c$')"
 
     check "latex: square root" \
         "square root of x plus 1" \

@@ -286,7 +286,7 @@ def _math_to_speech(expr):
     t = re.sub(r'\\mathrm\{([^{}]+)\}', r'\1', t)
     # Fractions (nested: repeat).
     for _ in range(6):
-        t = re.sub(r'\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}', r'\1 over \2', t)
+        t = re.sub(r'\\[cdt]?frac\{([^{}]*)\}\{([^{}]*)\}', r'\1 over \2', t)
     # Binomial.
     for _ in range(3):
         t = re.sub(r'\\binom\{([^{}]*)\}\{([^{}]*)\}', r'\1 choose \2', t)
@@ -346,7 +346,7 @@ def _math_to_speech(expr):
                lambda m: 'cases: ' + re.sub(r'\\\\', '; ', m.group(1)).replace('&', ','),
                t, flags=re.DOTALL)
     # Sizing commands (with optional delimiter).
-    t = re.sub(r'\\(?:left|right)\s*[()[\]|.\\/]', ' ', t)
+    t = re.sub(r'\\(?:left|right)\s*(?:\\[a-zA-Z]+|[()[\]|./])', ' ', t)
     t = _SIZING_RE.sub(' ', t)
     # Equation tags.
     t = re.sub(r'\\tag\*?\{([^{}]*)\}', r'(equation \1)', t)
@@ -383,7 +383,7 @@ def _math_to_speech(expr):
     # Remaining braces.
     t = re.sub(r'[{}]', '', t)
     # Operators.
-    t = re.sub(r'([^<>!])=([^=])', r'\1 equals \2', t)
+    t = re.sub(r'([^<>!])=(?!=)', r'\1 equals ', t)
     t = re.sub(r'(?<![<>])\+(?!\+)', ' plus ', t)
     t = re.sub(r'(?<=\s)-(?=\s)', ' minus ', t)
     t = re.sub(r'>(?!=)', ' greater than ', t)
@@ -609,6 +609,10 @@ def _frontend_latex(t):
         'example': _env_theorem('Example'),
     }
 
+    # Protect \$ and \& before L3 (env handlers call _process_text which has inline math regex).
+    t = re.sub(r'(?<!\\)\\&', '\x01', t)
+    t = re.sub(r'(?<!\\)\\\$', '\x02', t)
+
     # Math-internal environments: hide from L3 so _ENV_PAT can match outer
     # envs, then restore for _math_to_speech in L5.
     _MATH_ENVS = {'pmatrix','bmatrix','Bmatrix','vmatrix','Vmatrix','matrix',
@@ -704,9 +708,8 @@ def _frontend_latex(t):
     t = re.sub(r'\\title\{((?:[^{}]|\{[^{}]*\})*)\}', r'Title: \1. ', t)
     t = re.sub(r'\\author\{((?:[^{}]|\{[^{}]*\})*)\}', r'Authors: \1. ', t)
     # Special characters.
-    t = t.replace('\\&', '\x01')  # protect from pylatexenc & table separator
+    # \& and \$ already protected to \x01/\x02 before L3.
     t = t.replace('\\%', ' percent ')
-    t = t.replace('\\$', '\x02')  # protect from inline math regex
     t = t.replace('\\#', 'number ')
     t = t.replace('\\{', '(').replace('\\}', ')')
     t = t.replace('---', '\u2014').replace('--', '\u2013')
@@ -799,9 +802,9 @@ def _frontend_pdf(t):
             return m.group()
         p = m.group(1) + ' times ' if m.group(1) else ''
         return p + '10 to the ' + ('negative ' if e < 0 else '') + str(abs(e))
-    t = re.sub(r'(?:(\d[\d.,]*)\s*[' + '\u00d7' + r'xX]\s*)?\b10([\u207b' +
+    t = re.sub(r'(?:(\d[\d.,]*)\s*[' + '\u00d7' + r'xX]\s*)?10([\u207b' +
         r'\u00b9\u00b2\u00b3\u2074-\u2079\u2070]+)', _sci, t)
-    t = re.sub(r'(?:(\d[\d.,]*)\s*[' + '\u00d7' + r'xX]\s*)?\b10\^(-?\d+)',
+    t = re.sub(r'(?:(\d[\d.,]*)\s*[' + '\u00d7' + r'xX]\s*)?10\^(-?\d+)',
         _sci, t)
     # Isotope notation: superscript digits before element symbol.
     def _isotope(m):
@@ -809,8 +812,14 @@ def _frontend_pdf(t):
         sym = m.group(2)
         return _ELEM.get(sym, sym) + '-' + mass
     t = re.sub(r'(?<!\w)(' + _SUP_RE + r')([A-Z][a-z]?)\b', _isotope, t)
-    # Superscript minus+digit (cm^-1 -> inverse; before superscript expansion).
-    t = re.sub(r'\u207b[\xb9\xb2\xb3\u2074-\u2079\u2070]+', lambda m: ' inverse' if m.start()>0 else 'inverse', t)
+    # Superscript minus+digit (cm⁻¹ -> inverse, cm⁻² -> to the negative 2).
+    def _neg_sup(m):
+        digits = m.group()[1:].translate(_SD)  # skip leading ⁻
+        n = int(digits) if digits else 1
+        sp = ' ' if m.start() > 0 else ''
+        if n == 1: return sp + 'inverse'
+        return sp + 'to the negative ' + str(n)
+    t = re.sub(r'\u207b[\xb9\xb2\xb3\u2074-\u2079\u2070]+', _neg_sup, t)
     # Remaining superscript digits -> spoken exponents.
     def _expand_sup(m):
         digits = m.group().translate(_SD)
