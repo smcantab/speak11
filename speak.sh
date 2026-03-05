@@ -7,7 +7,8 @@
 #   - local       — mlx-audio / Kokoro (runs on Apple Silicon)
 #   - auto        — tries ElevenLabs first, falls back to local silently
 #
-# Requirements: afplay (built into macOS), curl (for ElevenLabs), python3
+# Requirements: afplay (built into macOS), curl (for ElevenLabs),
+#   venv python at ~/.local/share/speak11/venv (installed by install.command)
 
 # ── Configuration ──────────────────────────────────────────────────
 
@@ -109,13 +110,12 @@ TEXT=$(printf '%s' "$TEXT" | iconv -f UTF-8 -t UTF-8//IGNORE)
 
 # ── Normalize clipboard/PDF text for TTS ──────────────────────────
 # Cleans artifacts from PDF copy-paste so TTS engines read text naturally.
-# Single python call (~30ms); falls back to bash sed if python is absent.
+# Uses the venv python (ftfy required); falls back to bash sed if absent.
+VENV_PYTHON="${VENV_PYTHON:-$HOME/.local/share/speak11/venv/bin/python3}"
 normalize_text() {
-    local py="${VENV_PYTHON:-python3}"
-    [ -x "$py" ] 2>/dev/null || py=python3
     local result
-    if command -v "$py" >/dev/null 2>&1 && \
-       result=$(printf '%s' "$1" | "$py" -c "
+    if [ -x "$VENV_PYTHON" ] && \
+       result=$(printf '%s' "$1" | "$VENV_PYTHON" -c "
 import re, sys, unicodedata as _ud, ftfy
 
 t = sys.stdin.read()
@@ -338,9 +338,8 @@ if [ "$TTS_BACKEND" = "elevenlabs" ]; then
     fi
 fi
 
-# python3 is used for sentence splitting (local mode uses VENV_PYTHON);
-# split_sentences falls back to unsplit text if python3 is missing, so
-# this is not fatal — removed the hard exit.
+# VENV_PYTHON is used for sentence splitting and normalization;
+# split_sentences falls back to unsplit text if the venv is missing.
 
 # ── Shared state ─────────────────────────────────────────────────
 TMP_FILE=""
@@ -378,12 +377,9 @@ trap 'cleanup; exit 143' TERM
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Sentence splitter ────────────────────────────────────────────
-# Split text into sentences for streaming playback. Uses whichever
-# python is available (VENV_PYTHON for local-only, system python3 otherwise).
+# Split text into sentences for streaming playback.
 split_sentences() {
-    local py="${VENV_PYTHON:-python3}"
-    [ -x "$py" ] || py=python3
-    "$py" -c "
+    "$VENV_PYTHON" -c "
 import re, sys
 text = sys.stdin.read().rstrip('\n')
 try:
@@ -417,7 +413,6 @@ for p in parts:
 # Uses a persistent TTS daemon (tts_server.py) that keeps the model in
 # memory for near-instant response.  Falls back to direct invocation if
 # the daemon is unavailable.
-VENV_PYTHON="${VENV_PYTHON:-$HOME/.local/share/speak11/venv/bin/python3}"
 
 LOG_FILE="$HOME/.local/share/speak11/tts.log"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
@@ -466,7 +461,7 @@ tts_daemon_request() {
     # nc -U on macOS silently drops responses from Unix sockets.
     # Use a python one-liner for reliable socket I/O (one fork, same as nc).
     local resp
-    resp=$("${VENV_PYTHON:-python3}" -c "
+    resp=$("$VENV_PYTHON" -c "
 import socket,sys
 s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
 s.settimeout(120)
@@ -501,7 +496,6 @@ sys.stdout.write(d.decode().strip())
 
 run_local_tts() {
     local PY="${VENV_PYTHON}"
-    [ -x "$PY" ] || PY=python3  # fallback to system python
     {
         printf "\n[%s] run_local_tts\n" "$(date '+%Y-%m-%d %H:%M:%S')"
         echo "PY=$PY  VOICE=${LOCAL_VOICE:-bf_lily}  SPEED=$LOCAL_SPEED"

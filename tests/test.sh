@@ -4863,6 +4863,21 @@ check "speak.sh: normalize_text called after iconv" \
 check "speak.sh: sed fallback for missing python" \
     "yes" "$(grep -q 'sed.*/-\$/' "$SPEAK_SH" && echo "yes" || echo "no")"
 
+check "speak.sh: VENV_PYTHON set before normalize_text" \
+    "yes" "$(awk '/^VENV_PYTHON=/{v=NR} /^normalize_text\(\)/{n=NR} END{print (v<n?"yes":"no")}' "$SPEAK_SH")"
+
+check "speak.sh: no system python3 fallback in normalize_text" \
+    "yes" "$(awk '/^normalize_text\(\)/,/^}/{if(/:-python3/) found=1} END{print found?"no":"yes"}' "$SPEAK_SH")"
+
+check "speak.sh: no system python3 fallback in split_sentences" \
+    "yes" "$(awk '/^split_sentences\(\)/,/^}/{if(/:-python3/) found=1} END{print found?"no":"yes"}' "$SPEAK_SH")"
+
+check "speak.sh: no system python3 fallback in run_local_tts" \
+    "yes" "$(awk '/^run_local_tts\(\)/,/^}/{if(/fallback.*python3|PY=python3/) found=1} END{print found?"no":"yes"}' "$SPEAK_SH")"
+
+check "speak.sh: ftfy is required import (not try/except)" \
+    "yes" "$(grep -q '^import.*ftfy' "$SPEAK_SH" && echo "yes" || echo "no")"
+
 # ── Summary ──────────────────────────────────────────────────────
 
 printf "\n────────────────────────────────────────────\n"
