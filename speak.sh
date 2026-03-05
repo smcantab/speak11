@@ -174,6 +174,12 @@ t = re.sub(r'\s*\((?:[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+[A-Z][a-z]+))?(?:,?\s*\
 t = re.sub(r'\u207b[\xb9\xb2\xb3\u2074-\u2079\u2070]+', lambda m: ' inverse' if m.start()>0 else 'inverse', t)
 # Remaining superscript digits.
 t = re.sub(r'[\xb9\xb2\xb3\u2074-\u2079\u2070\u00b9]+', '', t)
+# Uncertainty notation: 2.5179(4) -> 2.5179 (standard deviation in parens).
+t = re.sub(r'(\d\.\d+)\(\d+\)', r'\1', t)
+# Miller indices: 3+ consecutive parenthesized 1-3 digit numbers -> digit-by-digit.
+def _miller(m):
+    return re.sub(r'\((\d{1,3})\)', lambda d: '(' + ' '.join(d.group(1)) + ')', m.group())
+t = re.sub(r'\(\d{1,3}\)(?:\s*,\s*(?:and\s+)?\(\d{1,3}\)){2,}', _miller, t)
 # Bullet and list markers at line start.
 t = re.sub(r'^[\u2022\u2023\u25e6\u2043\u2219] +', '', t, flags=re.MULTILINE)
 t = re.sub(r'^- +', '', t, flags=re.MULTILINE)
@@ -185,6 +191,18 @@ t = re.sub(r' ?-{2,3} ?', ' -- ', t)           # ASCII double/triple dash
 t = re.sub(r'\.{4,}', '...', t)                # excessive dots
 t = re.sub(r'\?{2,}', '?', t)
 t = re.sub(r'!{2,}', '!', t)
+# Common academic abbreviations.
+_ABBR = {'Fig.':'Figure','Figs.':'Figures','fig.':'figure','figs.':'figures',
+  'Eq.':'Equation','Eqs.':'Equations','eq.':'equation','eqs.':'equations',
+  'Ref.':'Reference','Refs.':'References','ref.':'reference','refs.':'references',
+  'Sect.':'Section','sect.':'section','Ch.':'Chapter','ch.':'chapter',
+  'Vol.':'Volume','vol.':'volume','No.':'Number','no.':'number',
+  'Suppl.':'Supplementary','suppl.':'supplementary',
+  'approx.':'approximately','vs.':'versus','e.g.':'for example','i.e.':'that is'}
+for _a,_w in sorted(_ABBR.items(), key=lambda x: -len(x[0])):
+    t = t.replace(_a, _w)
+# Equals sign (TTS engines often skip bare =).
+t = re.sub(r' = ', ' equals ', t)
 
 # ── Phase 5: Scientific symbols and units ─────────────────────
 # Single-character symbols to spoken form.
@@ -221,6 +239,22 @@ for _u,_w in sorted(_UUNIT.items(), key=lambda x: -len(x[0])):
     t = t.replace('\u00b5'+_u, 'micro'+_w)
 if '\u00b5' in t:
     t = re.sub(r'\u00b5(\w)', r'micro-\1', t)
+# SI prefix+unit abbreviations after numbers (TTS mumbles these).
+_SI = {'GPa':'gigapascals','MPa':'megapascals','kPa':'kilopascals','hPa':'hectopascals',
+  'GHz':'gigahertz','MHz':'megahertz','kHz':'kilohertz',
+  'GW':'gigawatts','MW':'megawatts','kW':'kilowatts','mW':'milliwatts',
+  'MeV':'megaelectronvolts','keV':'kiloelectronvolts','GeV':'gigaelectronvolts',
+  'kV':'kilovolts','mV':'millivolts',
+  'mL':'milliliters','dL':'deciliters',
+  'nm':'nanometers','mm':'millimeters','cm':'centimeters','km':'kilometers',
+  'mg':'milligrams','kg':'kilograms','ng':'nanograms','pg':'picograms',
+  'ns':'nanoseconds','ms':'milliseconds','ps':'picoseconds','fs':'femtoseconds',
+  'kJ':'kilojoules','MJ':'megajoules',
+  'mM':'millimolar','nM':'nanomolar','pM':'picomolar',
+  'kDa':'kilodaltons','MDa':'megadaltons',
+  'mA':'milliamperes'}
+for _u,_w in sorted(_SI.items(), key=lambda x: -len(x[0])):
+    t = re.sub(r'(?<=\d)\s*' + _u + r'\b', ' ' + _w, t)
 # Ohm: number + Ω (ftfy normalizes U+2126 to Greek omega).
 t = re.sub(r'(?<=\d)\s*[\u2126\u03a9](?=\s|$|[.,;:?!)])', ' ohms', t)
 # Greek letters via unicodedata (all 24, upper and lower).

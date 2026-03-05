@@ -1494,10 +1494,9 @@ rm -f "$_SIM_CONFIG" "$_SIM_OUT"
 check "§12: no set +e toggles in install.command" \
     "0" "$(grep -c 'set +e' "$SCRIPT_DIR/install.command")"
 
-# §13: Terminal activate block guarded by _IS_TERMINAL_APP
-# The 'set miniaturized of front window to false' and 'activate' must be inside a guard
-check "§13: Terminal activate guarded by _IS_TERMINAL_APP" \
-    "yes" "$(awk '/IS_TERMINAL_APP.*then/{found=1} found && /miniaturized.*false/{ok=1} /fi/{found=0} END{print (ok?"yes":"no")}' "$SCRIPT_DIR/install.command")"
+# §13: Terminal window is NOT minimized during install (stays visible)
+check "§13: Terminal not minimized during install" \
+    "yes" "$(grep -q 'miniaturized.*true' "$SCRIPT_DIR/install.command" && echo "no" || echo "yes")"
 
 # §14: Uninstaller copied to install directory
 check "§14: uninstall.command copied to install dir" \
@@ -4555,13 +4554,13 @@ if type normalize_text &>/dev/null; then
 
     # Thin/hair/figure spaces
     check "normalize: thin space to regular" \
-        "25 kg" "$(normalize_text $'25\xe2\x80\x89kg')"
+        "25 kilograms" "$(normalize_text $'25\xe2\x80\x89kg')"
 
     check "normalize: hair space to regular" \
-        "25 kg" "$(normalize_text $'25\xe2\x80\x8akg')"
+        "25 kilograms" "$(normalize_text $'25\xe2\x80\x8akg')"
 
     check "normalize: figure space to regular" \
-        "25 kg" "$(normalize_text $'25\xe2\x80\x87kg')"
+        "25 kilograms" "$(normalize_text $'25\xe2\x80\x87kg')"
 
     # URLs and DOIs
     check "normalize: strip https URL" \
@@ -4640,7 +4639,7 @@ if type normalize_text &>/dev/null; then
 
     # Decimal number not stripped as list marker
     check "normalize: decimal number preserved" \
-        "measured 3.5 kg" "$(normalize_text "measured 3.5 kg")"
+        "measured 3.5 kilograms" "$(normalize_text "measured 3.5 kg")"
 
     # Realistic PDF paragraph (combined artifacts)
     _PDF_INPUT=$'The infor-\nmation was presented in\nSection III of the docu-\nment. The results were\nstatistically significant.\n\nDr. Smith noted that the\ndata supports the hypothesis.'
@@ -4725,6 +4724,80 @@ if type normalize_text &>/dev/null; then
 
     check "normalize: no space after opening bracket" \
         "[see above]" "$(normalize_text "[ see above]")"
+
+    # SI prefix+unit abbreviations
+    check "normalize: mm to millimeters" \
+        "5 millimeters thick" "$(normalize_text "5 mm thick")"
+
+    check "normalize: mm glued to number" \
+        "5 millimeters thick" "$(normalize_text "5mm thick")"
+
+    check "normalize: GPa to gigapascals" \
+        "100 gigapascals pressure" "$(normalize_text "100 GPa pressure")"
+
+    check "normalize: nm to nanometers" \
+        "450 nanometers wavelength" "$(normalize_text "450 nm wavelength")"
+
+    check "normalize: kHz to kilohertz" \
+        "44 kilohertz sample rate" "$(normalize_text "44 kHz sample rate")"
+
+    check "normalize: mg to milligrams" \
+        "500 milligrams dose" "$(normalize_text "500 mg dose")"
+
+    check "normalize: kDa to kilodaltons" \
+        "70 kilodaltons protein" "$(normalize_text "70 kDa protein")"
+
+    check "normalize: mM to millimolar" \
+        "10 millimolar concentration" "$(normalize_text "10 mM concentration")"
+
+    check "normalize: fs to femtoseconds" \
+        "100 femtoseconds pulse" "$(normalize_text "100 fs pulse")"
+
+    check "normalize: keV to kiloelectronvolts" \
+        "5 kiloelectronvolts beam" "$(normalize_text "5 keV beam")"
+
+    check "normalize: SI unit not in plain word" \
+        "the mm is ambiguous" "$(normalize_text "the mm is ambiguous")"
+
+    # Uncertainty notation (standard deviation in parentheses)
+    check "normalize: uncertainty stripped" \
+        "2.5179 angstroms" "$(normalize_text $'2.5179(4) \xc3\x85')"
+
+    check "normalize: uncertainty multiple" \
+        "a equals 2.518, c equals 4.183" \
+        "$(normalize_text "a = 2.518(4), c = 4.183(2)")"
+
+    # Miller indices (3+ consecutive parenthesized numbers)
+    check "normalize: Miller indices digit-by-digit" \
+        "the (1 0 0), (0 0 2), (1 0 1) planes" \
+        "$(normalize_text "the (100), (002), (101) planes")"
+
+    check "normalize: single parens not Miller" \
+        "approximately (100) people" \
+        "$(normalize_text "approximately (100) people")"
+
+    # Academic abbreviations
+    check "normalize: Fig to Figure" \
+        "Figure 3 shows" "$(normalize_text "Fig. 3 shows")"
+
+    check "normalize: Eq to Equation" \
+        "see Equation 5" "$(normalize_text "see Eq. 5")"
+
+    check "normalize: Ref to Reference" \
+        "see Reference 12" "$(normalize_text "see Ref. 12")"
+
+    check "normalize: eg expansion" \
+        "metals (for example iron)" "$(normalize_text "metals (e.g. iron)")"
+
+    check "normalize: ie expansion" \
+        "that is ferromagnetic" "$(normalize_text "i.e. ferromagnetic")"
+
+    # Equals sign
+    check "normalize: equals sign spoken" \
+        "x equals 10" "$(normalize_text "x = 10")"
+
+    check "normalize: chained equals" \
+        "a equals b equals 2.5" "$(normalize_text "a = b = 2.5")"
 else
     check "normalize: function not found" "yes" "no"
 fi
