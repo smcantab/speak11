@@ -327,7 +327,7 @@ printf '#!/bin/bash\nexit 1\n' > "$_STUBS/python3"
 chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/curl" "$_STUBS/python3"
 
 check_exit "auto + no API key + no local TTS → exits 1" 1 \
-    bash -c 'echo "hello world" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" ELEVENLABS_API_KEY="" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello world" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" ELEVENLABS_API_KEY="" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -498,7 +498,7 @@ PYSTUB
 chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/afplay" "$_STUBS/python3"
 
 check_exit "TTS_BACKEND=local with no API key → exits 0 (key not needed)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local LOCAL_VOICE=af_heart bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local LOCAL_VOICE=af_heart SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -544,7 +544,7 @@ chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/afplay" "$_STUBS/curl" 
 
 # Test: local backend routes to mlx_audio, not curl
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "local backend → curl NOT called" \
     "no" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "local backend → mlx_audio called" \
@@ -552,7 +552,7 @@ check "local backend → mlx_audio called" \
 
 # Test: auto backend (with API key) routes to curl, not mlx_audio
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "auto backend (key) → curl called" \
     "yes" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "auto backend (key) → mlx_audio NOT called" \
@@ -592,7 +592,7 @@ printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
 printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
 chmod +x "$_STUBS"/*
 
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 
 # The 429 handler should show a special dialog offering to install local TTS,
 # not just the generic error dialog (which also happens to contain "quota" from
@@ -614,7 +614,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "HTTP 401 → exits 1 (normal error, not quota)" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 check "HTTP 401 → dialog does NOT offer local TTS install" \
     "no" "$(grep -qi 'Install Local TTS' "$_LOG" 2>/dev/null && echo "yes" || echo "no")"
@@ -649,7 +649,7 @@ PYSTUB
 chmod +x "$_STUBS"/*
 
 check_exit "local TTS generation failure → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 # Check that the dialog specifically mentions local/generation failure, not just any dialog
 check "local TTS failure → error dialog mentions generation" \
@@ -707,7 +707,7 @@ chmod +x "$_STUBS"/*
 # Test: 429 + both installed → silent fallback to local (no dialog)
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "429 + both installed → exits 0 (silent fallback)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "429 + both → local TTS called as fallback" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 check "429 + both → no dialog shown (silent)" \
@@ -719,7 +719,7 @@ printf '#!/bin/bash\nexit 7\n' > "$_STUBS/curl"   # exit 7 = connection refused
 chmod +x "$_STUBS/curl"
 
 check_exit "network failure + both installed → exits 0 (silent fallback)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "network failure + both → local TTS called as fallback" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 
@@ -750,7 +750,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "429 + both + local fails → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "429 + both + local fails → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 
@@ -760,14 +760,14 @@ printf '#!/bin/bash\nexit 7\n' > "$_STUBS/curl"
 chmod +x "$_STUBS/curl"
 
 check_exit "network failure + both + local fails → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "network failure + both + local fails → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 
 # Test: network failure + elevenlabs only → error dialog, not fallback
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "network failure + elevenlabs only → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=elevenlabs SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "network failure + elevenlabs only → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 check "network failure + elevenlabs only → no fallback to local" \
@@ -846,7 +846,7 @@ printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
 chmod +x "$_STUBS"/*
 
 echo "Hello world. This is a test sentence." | \
-    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
 check "TEXT_FILE created with piped text" \
@@ -897,7 +897,7 @@ PYSTUB
 chmod +x "$_STUBS"/*
 
 echo "Local TTS test sentence." | \
-    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart SPEAK11_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
 check "local backend: TEXT_FILE created" \
@@ -956,7 +956,7 @@ chmod +x "$_STUBS"/*
 
 # Test: auto + API key → ElevenLabs
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "auto + API key → curl called (ElevenLabs)" \
     "yes" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "auto + API key → mlx_audio NOT called" \
@@ -966,7 +966,7 @@ check "auto + API key → mlx_audio NOT called" \
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
 printf '#!/bin/bash\nexit 1\n' > "$_STUBS/security"
 chmod +x "$_STUBS/security"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto ELEVENLABS_API_KEY="" bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto ELEVENLABS_API_KEY="" SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "auto + no API key → curl NOT called" \
     "no" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "auto + no API key → mlx_audio called (local)" \
@@ -975,7 +975,7 @@ check "auto + no API key → mlx_audio called (local)" \
 # Test: auto + no API key → exits 0 (no error dialog)
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
 check_exit "auto + no API key → exits 0 (silent local)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto ELEVENLABS_API_KEY="" bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto ELEVENLABS_API_KEY="" SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -1021,7 +1021,7 @@ chmod +x "$_STUBS"/*
 
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "auto + network failure → exits 0 (falls back)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "auto + network failure → local TTS called" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 check "auto + network failure → no dialog (silent)" \
@@ -1041,7 +1041,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "auto + 429 → exits 0 (falls back)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_MUTE_CHECKED=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "auto + 429 → local TTS called" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 
@@ -1088,14 +1088,14 @@ PYSTUB
 chmod +x "$_STUBS"/*
 
 # Test with American voice → should derive lang_code "a"
-echo "test" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
+echo "test" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart SPEAK11_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 check "af_heart → lang_code 'a'" \
     "a" "$(cat "$_TESTTMP/captured_lang" 2>/dev/null)"
 
 # Test with British voice → should derive lang_code "b"
 rm -f "$_TESTTMP/captured_lang"
-echo "test" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=bf_emma \
+echo "test" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=bf_emma SPEAK11_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 check "bf_emma → lang_code 'b'" \
     "b" "$(cat "$_TESTTMP/captured_lang" 2>/dev/null)"
@@ -3502,7 +3502,7 @@ chmod +x "$_STUBS"/*
 
 # 3 sentences: "Alpha. Beta. Gamma." → offsets 0, 7, 13
 echo "Alpha. Beta. Gamma." | \
-    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
 # STATUS_FILE should contain the LAST sentence's offset and length.
@@ -3550,7 +3550,7 @@ PYSTUB
 chmod +x "$_STUBS"/*
 
 echo "Alpha. Beta. Gamma." | \
-    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart SPEAK11_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
 _STATUS_OFFSET=$(sed -n '3p' "$_TESTTMP/speak11_status" 2>/dev/null)
@@ -3784,7 +3784,7 @@ STUB
 chmod +x "$_STUBS"/*
 
 check_exit "429 + install-local + local TTS succeeds → exits 0" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -3829,7 +3829,7 @@ done
 
 _T0=$(date +%s)
 printf '%s' "$_BIGTEXT" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" \
-    TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart \
+    TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart SPEAK11_NO_QUEUE_PLAYER=1 \
     timeout 5 /bin/bash "$SPEAK_SH" >/dev/null 2>&1 || true
 _T1=$(date +%s)
 _ELAPSED=$(( ${_T1:-0} - ${_T0:-0} ))
@@ -3867,7 +3867,7 @@ printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
 chmod +x "$_STUBS"/*
 
 echo "Hello world." | \
-    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
 _STATUS_EPOCH=$(head -1 "$_TESTTMP/speak11_status" 2>/dev/null || echo "0")
@@ -4260,6 +4260,125 @@ check "install.command: validates via /v1/user/subscription" \
 
 check "install.command: prompt_api_key loops on failure" \
     "yes" "$(grep -q 'while true' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+
+# ── Audio queue player ────────────────────────────────────────────
+
+section "Audio queue player (speak11-audio play-queue)"
+
+# Shell-portable timeout: run command in background, kill after N seconds.
+# Usage: _run_with_timeout SECONDS command [args...]
+# Sets _TIMEOUT_OUT (stdout) and _TIMEOUT_EXIT.
+_run_with_timeout() {
+    local _secs="$1"; shift
+    local _tout_file
+    _tout_file=$(mktemp "${TMPDIR:-/tmp}/speak11_tout_XXXXXXXXXX")
+    "$@" > "$_tout_file" 2>/dev/null &
+    local _bg=$!
+    ( sleep "$_secs"; kill "$_bg" 2>/dev/null ) &
+    local _wdog=$!
+    _TIMEOUT_EXIT=0
+    wait "$_bg" 2>/dev/null || _TIMEOUT_EXIT=$?
+    kill "$_wdog" 2>/dev/null; wait "$_wdog" 2>/dev/null || true
+    _TIMEOUT_OUT=$(cat "$_tout_file" 2>/dev/null)
+    rm -f "$_tout_file"
+}
+
+# Generate a tiny test WAV (~50ms, 24kHz mono 16-bit) for fast tests.
+_TEST_WAV="${TMPDIR:-/tmp}/speak11_test_$$.wav"
+python3 -c "
+import wave, struct, math
+with wave.open('$_TEST_WAV', 'w') as f:
+    f.setnchannels(1); f.setsampwidth(2); f.setframerate(24000)
+    n = 1200  # 50ms at 24kHz
+    f.writeframes(b''.join(struct.pack('<h', int(16000 * math.sin(2*math.pi*440*i/24000))) for i in range(n)))
+" 2>/dev/null
+
+# Compile speak11-audio (reuse for queue player tests)
+_QP_BIN="${TMPDIR:-/tmp}/speak11_audio_test_$$"
+_QP_COMPILED=false
+if ! $FAST; then
+    if xcrun swiftc "$SCRIPT_DIR/speak11-audio.swift" -o "$_QP_BIN" -O 2>/dev/null; then
+        _QP_COMPILED=true
+        check "speak11-audio compiles with play-queue support" "true" "$_QP_COMPILED"
+    else
+        check "speak11-audio compiles with play-queue support" "true" "false"
+    fi
+else
+    # Fast mode: use pre-compiled binary if available
+    if [ -x "$HOME/.local/bin/speak11-audio" ]; then
+        _QP_BIN="$HOME/.local/bin/speak11-audio"
+        _QP_COMPILED=true
+    fi
+fi
+
+if $_QP_COMPILED; then
+    # Existing commands still work
+    _mute_exit=0
+    "$_QP_BIN" is-muted >/dev/null 2>&1 || _mute_exit=$?
+    check "speak11-audio: is-muted exits 0 or 1" \
+        "yes" "$([ $_mute_exit -eq 0 ] || [ $_mute_exit -eq 1 ] && echo "yes" || echo "no")"
+
+    check "speak11-audio: unknown command exits 2" \
+        "2" "$("$_QP_BIN" bogus 2>/dev/null; echo $?)"
+
+    # play-queue: single file → outputs duration then DONE
+    _QP_STATUS="${TMPDIR:-/tmp}/speak11_qpstatus_$$"
+    _run_with_timeout 5 bash -c \
+        "printf '%s\t%s\t%s\t%s\t%s\n' \"$_TEST_WAV\" '1700000000.000' '0' '100' \"$_QP_STATUS\" | \"$_QP_BIN\" play-queue"
+    _QP_LINE1=$(echo "$_TIMEOUT_OUT" | head -1)
+    _QP_LINE2=$(echo "$_TIMEOUT_OUT" | sed -n '2p')
+
+    check "play-queue: outputs duration as first line" \
+        "yes" "$(echo "$_QP_LINE1" | grep -qE '^[0-9]+\.[0-9]+$' && echo "yes" || echo "no")"
+
+    check "play-queue: outputs DONE as second line" \
+        "DONE" "$_QP_LINE2"
+
+    # play-queue: STATUS_FILE is written with correct format (4 lines)
+    if [ -f "$_QP_STATUS" ]; then
+        _QP_SLINES=$(wc -l < "$_QP_STATUS" | tr -d ' ')
+        check "play-queue: STATUS_FILE has 4 non-empty lines" \
+            "yes" "$([ "$_QP_SLINES" -ge 4 ] && echo "yes" || echo "no")"
+
+        _QP_S1=$(sed -n '1p' "$_QP_STATUS")
+        _QP_S2=$(sed -n '2p' "$_QP_STATUS")
+        _QP_S3=$(sed -n '3p' "$_QP_STATUS")
+        _QP_S4=$(sed -n '4p' "$_QP_STATUS")
+
+        check "play-queue: STATUS_FILE line 1 is epoch" \
+            "yes" "$(echo "$_QP_S1" | grep -qE '^[0-9]+\.[0-9]+$' && echo "yes" || echo "no")"
+        check "play-queue: STATUS_FILE line 2 is duration" \
+            "yes" "$(echo "$_QP_S2" | grep -qE '^[0-9]+\.[0-9]+$' && echo "yes" || echo "no")"
+        check "play-queue: STATUS_FILE line 3 is offset" \
+            "0" "$_QP_S3"
+        check "play-queue: STATUS_FILE line 4 is sent_len" \
+            "100" "$_QP_S4"
+    else
+        check "play-queue: STATUS_FILE exists" "yes" "no"
+    fi
+    rm -f "$_QP_STATUS"
+
+    # play-queue: multiple files → 2 durations + 2 DONEs
+    _QP_STATUS2="${TMPDIR:-/tmp}/speak11_qpstatus2_$$"
+    _run_with_timeout 5 bash -c \
+        "printf '%s\t%s\t%s\t%s\t%s\n%s\t%s\t%s\t%s\t%s\n' \"$_TEST_WAV\" '1700000000.000' '0' '50' \"$_QP_STATUS2\" \"$_TEST_WAV\" '1700000001.000' '50' '60' \"$_QP_STATUS2\" | \"$_QP_BIN\" play-queue"
+    _QP_NDUR=$(echo "$_TIMEOUT_OUT" | grep -cE '^[0-9]+\.[0-9]+$' || true)
+    _QP_NDONE=$(echo "$_TIMEOUT_OUT" | grep -c '^DONE$' || true)
+
+    check "play-queue: 2 files → 2 duration lines" \
+        "2" "$_QP_NDUR"
+    check "play-queue: 2 files → 2 DONE lines" \
+        "2" "$_QP_NDONE"
+    rm -f "$_QP_STATUS2"
+
+    # play-queue: exits cleanly on stdin close
+    _run_with_timeout 3 bash -c "echo '' | \"$_QP_BIN\" play-queue"
+    check "play-queue: exits on stdin close" \
+        "yes" "$([ $_TIMEOUT_EXIT -eq 0 ] && echo "yes" || echo "no")"
+fi
+
+rm -f "$_TEST_WAV"
+[ "$_QP_BIN" != "$HOME/.local/bin/speak11-audio" ] && rm -f "$_QP_BIN"
 
 # ── Text normalization (PDF cleanup) ─────────────────────────────
 

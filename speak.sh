@@ -124,13 +124,16 @@ normalize_text() {
     fi
 }
 TEXT=$(normalize_text "$TEXT")
+# ── Locate speak11-audio CLI ──────────────────────────────────────
+# Used for both the mute check (below) and the audio queue player (later).
+_AUDIO_TOOL="$SCRIPT_DIR/speak11-audio"
+[ -x "$_AUDIO_TOOL" ] || _AUDIO_TOOL="$HOME/.local/bin/speak11-audio"
+
 # ── Mute check ────────────────────────────────────────────────────
 # When launched from Speak11.app, the mute check is done in-process via
 # CoreAudio (microseconds). SPEAK11_MUTE_CHECKED=1 signals this.
 # Standalone: speak11-audio CLI (35ms) or osascript fallback (80-500ms).
 if [ "${SPEAK11_MUTE_CHECKED:-}" != "1" ]; then
-    _AUDIO_TOOL="$SCRIPT_DIR/speak11-audio"
-    [ -x "$_AUDIO_TOOL" ] || _AUDIO_TOOL="$HOME/.local/bin/speak11-audio"
     if [ -x "$_AUDIO_TOOL" ]; then
         _is_muted() { "$_AUDIO_TOOL" is-muted; }
         _unmute()   { "$_AUDIO_TOOL" unmute 2>/dev/null; }
@@ -168,6 +171,8 @@ _CURL_PID=""
 _DAEMON_PID=""
 _PREV_TMP_FILE=""
 _PREV_TMP_DIR=""
+_AUDIO_PLAYER_PID=""
+_AUDIO_PLAYING=false
 
 # Write our PID so the toggle can kill the entire process (not just afplay).
 echo "$$" > "$PID_FILE"
@@ -180,6 +185,9 @@ cleanup() {
     # (python3) first, then the subshell itself.
     [ -n "$_DAEMON_PID" ] && { pkill -P "$_DAEMON_PID" 2>/dev/null; kill "$_DAEMON_PID" 2>/dev/null; }
     [ -n "$PLAY_PID" ] && kill "$PLAY_PID" 2>/dev/null
+    # Stop audio queue player (FIFOs already unlinked; close FDs to signal EOF)
+    [ -n "$_AUDIO_PLAYER_PID" ] && kill "$_AUDIO_PLAYER_PID" 2>/dev/null
+    exec 7>&- 2>/dev/null; exec 8<&- 2>/dev/null
     pkill -P $$ 2>/dev/null
     rm -f "$TMP_FILE" "$_PREV_TMP_FILE" "${TMP_FILE}.code"
     [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
@@ -192,6 +200,13 @@ cleanup() {
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
+
+# Trace helper: high-resolution timestamp to stderr when SPEAK11_TRACE is set.
+_trace() {
+    [ -n "$SPEAK11_TRACE" ] || return 0
+    printf 'TRACE %-16s %s\n' "$1" \
+        "$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time')" >&2
+}
 
 # ── Sentence splitter ────────────────────────────────────────────
 # Split text into sentences for streaming playback.
@@ -383,22 +398,32 @@ run_local_tts() {
 # Starts playback in the background. Call wait_audio before the next play_audio.
 # This overlap lets the next sentence generate while the current one plays.
 play_audio() {
-    local duration
-    # Use wav_duration for local WAV files (no fork), afinfo for cloud audio
-    if [[ "$TMP_FILE" == *.wav ]]; then
-        duration=$(wav_duration "$TMP_FILE" 2>/dev/null)
-    fi
-    [ -z "$duration" ] && duration=$(afinfo "$TMP_FILE" 2>/dev/null | awk '/estimated duration/{print $3}')
-    # Epoch from cached base + $SECONDS offset (zero fork per sentence).
-    # _BASE_EPOCH (e.g. "1772511783.546") was set once before the pipeline loop.
     local _epoch_int=$(( ${_BASE_EPOCH%%.*} + SECONDS - _BASE_SECONDS ))
-    printf '%s.%s\n%s\n%s\n%s\n' "$_epoch_int" "${_BASE_EPOCH#*.}" "${duration:-0}" "${1:-0}" "${2:-0}" > "$STATUS_FILE"
-    afplay "$TMP_FILE" &
-    PLAY_PID=$!
+    local _epoch="${_epoch_int}.${_BASE_EPOCH#*.}"
+    if [ -n "$_AUDIO_PLAYER_PID" ]; then
+        # Fast path: queue player (0ms inter-sentence gap)
+        printf '%s\t%s\t%s\t%s\t%s\n' "$TMP_FILE" "$_epoch" "${1:-0}" "${2:-0}" "$STATUS_FILE" >&7
+        read -r _duration <&8   # blocks ~1ms (duration line)
+        _AUDIO_PLAYING=true
+    else
+        # Fallback: afplay (when speak11-audio is unavailable)
+        local duration
+        if [[ "$TMP_FILE" == *.wav ]]; then
+            duration=$(wav_duration "$TMP_FILE" 2>/dev/null)
+        fi
+        [ -z "$duration" ] && duration=$(afinfo "$TMP_FILE" 2>/dev/null | awk '/estimated duration/{print $3}')
+        printf '%s\n%s\n%s\n%s\n' "$_epoch" "${duration:-0}" "${1:-0}" "${2:-0}" > "$STATUS_FILE"
+        afplay "$TMP_FILE" &
+        PLAY_PID=$!
+    fi
 }
 
 wait_audio() {
-    if [ -n "$PLAY_PID" ]; then
+    if [ -n "$_AUDIO_PLAYER_PID" ]; then
+        $_AUDIO_PLAYING || return 0
+        read -r _done_signal <&8   # blocks until "DONE"
+        _AUDIO_PLAYING=false
+    elif [ -n "$PLAY_PID" ]; then
         wait "$PLAY_PID" 2>/dev/null || true
         PLAY_PID=""
     fi
@@ -480,6 +505,19 @@ _SENTENCES=$(split_sentences "$TEXT")
 _BASE_EPOCH=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time')
 _BASE_SECONDS=$SECONDS
 
+# Start persistent audio queue player (eliminates ~1s afplay overhead per sentence).
+# Falls back to afplay if speak11-audio is unavailable or SPEAK11_NO_QUEUE_PLAYER is set.
+if [ -x "$_AUDIO_TOOL" ] && [ -z "$SPEAK11_NO_QUEUE_PLAYER" ]; then
+    _AUDIO_IN="${TMPDIR:-/tmp}/speak11_ain_$$"
+    _AUDIO_OUT="${TMPDIR:-/tmp}/speak11_aout_$$"
+    mkfifo "$_AUDIO_IN" "$_AUDIO_OUT"
+    "$_AUDIO_TOOL" play-queue < "$_AUDIO_IN" > "$_AUDIO_OUT" &
+    _AUDIO_PLAYER_PID=$!
+    exec 7>"$_AUDIO_IN"   # write file paths here
+    exec 8<"$_AUDIO_OUT"  # read duration + DONE here
+    rm -f "$_AUDIO_IN" "$_AUDIO_OUT"  # safe: open FDs keep pipes alive after unlink
+fi
+
 if [ "$TTS_BACKEND" = "local" ]; then
     # ── Local TTS (mlx-audio / Kokoro) ───────────────────────────
     # Pipeline: generate next sentence while the current one plays,
@@ -489,20 +527,26 @@ if [ "$TTS_BACKEND" = "local" ]; then
     while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
         [ -z "$_SENTENCE" ] && continue
         TEXT="$_SENTENCE"
+        _trace "gen_start"
         run_local_tts
         _ok=$?
+        _trace "gen_done"
         if $_FIRST && [ $_ok -ne 0 ]; then
             osascript -e 'display dialog "Local TTS generation failed." & return & return & "Re-run the Speak11 installer to repair the local TTS setup." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
             exit 1
         fi
         if [ $_ok -eq 0 ]; then
+            _trace "wait_start"
             wait_audio
+            _trace "wait_done"
             [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
             [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
             _FIRST=false
             _PREV_TMP_FILE="$TMP_FILE"
             _PREV_TMP_DIR="$TMP_DIR"
+            _trace "play_start"
             play_audio "$_OFFSET" "$_SENT_LEN"
+            _trace "play_launched"
         fi
     done <<< "$_SENTENCES"
     wait_audio
@@ -513,14 +557,20 @@ else
     _FIRST=true
     while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
         [ -z "$_SENTENCE" ] && continue
+        _trace "gen_start"
         if ! run_elevenlabs_tts "$_SENTENCE"; then
             break  # first sentence → error handler below; later → exit silently
         fi
+        _trace "gen_done"
+        _trace "wait_start"
         wait_audio
+        _trace "wait_done"
         [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
         _FIRST=false
         _PREV_TMP_FILE="$TMP_FILE"
+        _trace "play_start"
         play_audio "$_OFFSET" "$_SENT_LEN"
+        _trace "play_launched"
     done <<< "$_SENTENCES"
     wait_audio
 
