@@ -11,7 +11,7 @@
 
 set -eo pipefail
 
-VENV_DIR="$HOME/.local/share/speak11/venv"
+VENV_DIR="${VENV_DIR:-$HOME/.local/share/speak11/venv}"
 
 # ── Apple Silicon check ──────────────────────────────────────────
 if [ "$(uname -m)" != "arm64" ]; then
@@ -166,26 +166,28 @@ else
     echo "Kokoro model already cached."
 fi
 
-# ── Update config ────────────────────────────────────────────────
-_CONFIG="$HOME/.config/speak11/config"
-mkdir -p "$(dirname "$_CONFIG")"
+# ── Update config (skip for dev/test venvs) ──────────────────────
+if [ "$VENV_DIR" = "$HOME/.local/share/speak11/venv" ]; then
+    _CONFIG="$HOME/.config/speak11/config"
+    mkdir -p "$(dirname "$_CONFIG")"
 
-if [ -f "$_CONFIG" ]; then
-    # Mark local as installed — don't change the active backend (caller decides)
-    if grep -q '^TTS_BACKENDS_INSTALLED=' "$_CONFIG"; then
-        sed -i '' 's/^TTS_BACKENDS_INSTALLED=.*/TTS_BACKENDS_INSTALLED="both"/' "$_CONFIG"
+    if [ -f "$_CONFIG" ]; then
+        # Mark local as installed — don't change the active backend (caller decides)
+        if grep -q '^TTS_BACKENDS_INSTALLED=' "$_CONFIG"; then
+            sed -i '' 's/^TTS_BACKENDS_INSTALLED=.*/TTS_BACKENDS_INSTALLED="both"/' "$_CONFIG"
+        else
+            printf 'TTS_BACKENDS_INSTALLED="both"\n' >> "$_CONFIG"
+        fi
     else
-        printf 'TTS_BACKENDS_INSTALLED="both"\n' >> "$_CONFIG"
-    fi
-else
-    # Create config with auto backend (degrades to local if no API key)
-    cat > "$_CONFIG" << 'EOF'
+        # Create config with auto backend (degrades to local if no API key)
+        cat > "$_CONFIG" << 'EOF'
 TTS_BACKEND="auto"
 TTS_BACKENDS_INSTALLED="both"
 LOCAL_VOICE="bf_lily"
 SPEED="1.0"
 LOCAL_SPEED="1.0"
 EOF
-fi
+    fi
 
-echo "Config updated: local TTS available."
+    echo "Config updated: local TTS available."
+fi

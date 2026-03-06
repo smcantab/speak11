@@ -15,6 +15,7 @@ speak11-audio
 
 # Python
 __pycache__/
+.venv/
 
 # IDE
 .vscode/

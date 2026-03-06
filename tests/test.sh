@@ -34,6 +34,34 @@ _SKIP_SECTION=false
 # Isolate tests from any real running TTS daemon
 export TTS_SOCK="/tmp/speak11_test_nosock_$$"
 
+# ── Dev venv (repo-local, gitignored, survives uninstall) ─────
+# Mirrors a full install: runs install-local.sh + adds pylatexenc.
+# Re-runs only when install-local.sh or install.command change.
+# If install-local.sh fails (not ARM64, no internet), falls back to
+# a lightweight venv with just ftfy + pylatexenc for normalization tests.
+DEV_VENV="$SCRIPT_DIR/.venv"
+_STAMP="$DEV_VENV/.dep-stamp"
+_DEP_HASH=$(cat "$SCRIPT_DIR/install-local.sh" "$SCRIPT_DIR/install.command" | shasum | cut -d' ' -f1)
+_bootstrap_venv() {
+    if VENV_DIR="$DEV_VENV" bash "$SCRIPT_DIR/install-local.sh" 2>&1; then
+        "$DEV_VENV/bin/pip" install --quiet pylatexenc
+    else
+        printf "  Full install failed, creating lightweight venv ...\n"
+        rm -rf "$DEV_VENV"
+        python3 -m venv "$DEV_VENV"
+        "$DEV_VENV/bin/pip" install --quiet ftfy pylatexenc
+    fi
+    echo "$_DEP_HASH" > "$_STAMP"
+}
+if [ ! -x "$DEV_VENV/bin/python3" ]; then
+    printf "Bootstrapping dev venv (full install) ...\n"
+    _bootstrap_venv
+elif [ "$_DEP_HASH" != "$(cat "$_STAMP" 2>/dev/null)" ]; then
+    printf "Dev venv out of date, re-running install ...\n"
+    _bootstrap_venv
+fi
+export VENV_PYTHON="$DEV_VENV/bin/python3"
+
 # ── Helpers ──────────────────────────────────────────────────────
 
 check() {
@@ -1679,7 +1707,7 @@ check "no mktemp templates with suffix after XXXXXX" \
 # ── 33. Local TTS integration (skipped with --fast) ────────────
 section "Local TTS integration"
 
-VENV_PY="$HOME/.local/share/speak11/venv/bin/python3"
+VENV_PY="$DEV_VENV/bin/python3"
 if [ "${1:-}" = "--fast" ] || [ ! -x "$VENV_PY" ]; then
     printf "  %s  %s\n" "SKIP" "local TTS: venv not installed or --fast mode"
 else
@@ -4238,7 +4266,7 @@ check "install.command: prompt_api_key loops on failure" \
 section "Text normalization (PDF cleanup)"
 
 # Source normalize_text from speak.sh; use venv python for ftfy support
-VENV_PYTHON="${VENV_PYTHON:-$HOME/.local/share/speak11/venv/bin/python3}"
+# VENV_PYTHON set at top of script (dev venv)
 eval "$(awk '/^normalize_text\(\)/,/^}/' "$SPEAK_SH")" 2>/dev/null || true
 
 if type normalize_text &>/dev/null; then
