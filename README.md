@@ -127,6 +127,7 @@ Double-click **`uninstall.command`** — it removes everything including the Acc
 | "python3 not found" | Run `xcode-select --install` in Terminal |
 | Settings app fails to compile | Check `~/.local/share/speak11/install.log` for the error. Usually fixed by updating Command Line Tools: `sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install` |
 | Local TTS is slow | Check `~/.local/share/speak11/tts.log` for errors. The TTS daemon keeps the model loaded and warmed up in memory so requests are near-instant |
+| Audio playback issues | Set `SPEAK11_NO_QUEUE_PLAYER=1` to fall back to afplay (slower but simpler). If that fixes it, the issue is with the audio queue player — re-run `install.command` to rebuild it |
 
 ## Cost
 
@@ -171,10 +172,23 @@ export ELEVENLABS_API_KEY="your-api-key"       # overrides Keychain
 export ELEVENLABS_VOICE_ID="your-voice-id"
 export ELEVENLABS_MODEL_ID="eleven_multilingual_v2"
 export TTS_BACKEND="local"                     # "auto" (default), "elevenlabs", or "local"
+export SPEED="1.10"                            # ElevenLabs speed (0.7 to 1.2)
+export STABILITY="0.50"                        # 0.0 (expressive) to 1.0 (steady)
+export SIMILARITY_BOOST="0.75"                 # 0.0 to 1.0
+export STYLE="0.00"                            # 0.0 to 1.0 (adds latency)
+export USE_SPEAKER_BOOST="true"                # "true" or "false"
 export LOCAL_VOICE="am_adam"                   # Kokoro voice ID
 export LOCAL_SPEED="1.25"                      # 0.5 to 2.0
 export SENTENCE_PAUSE="400"                    # inter-sentence pause (ms at 1× speed, default 400)
 export SPEAK11_IDLE_TIMEOUT="600"              # daemon idle shutdown (seconds, default 300)
+```
+
+Debug variables (not needed for normal use):
+
+```bash
+export SPEAK11_TRACE=1                         # print timing trace to stderr
+export SPEAK11_NO_QUEUE_PLAYER=1               # fall back to afplay (one process per sentence)
+export VENV_PYTHON="/path/to/python3"          # override the default venv Python
 ```
 
 ### Voice IDs
