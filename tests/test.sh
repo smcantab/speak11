@@ -49,7 +49,7 @@ _bootstrap_venv() {
         printf "  Full install failed, creating lightweight venv ...\n"
         rm -rf "$DEV_VENV"
         python3 -m venv "$DEV_VENV"
-        "$DEV_VENV/bin/pip" install --quiet ftfy pylatexenc pyphen
+        "$DEV_VENV/bin/pip" install --quiet ftfy pylatexenc
     fi
     echo "$_DEP_HASH" > "$_STAMP"
 }
@@ -4289,11 +4289,11 @@ if type normalize_text &>/dev/null; then
     check "normalize: non-linear preserved" \
         "non-linear model" "$(normalize_text $'non-\nlinear model')"
 
-    check "normalize: co-authored preserved (pyphen)" \
-        "co-authored paper" "$(normalize_text $'co-\nauthored paper')"
+    check "normalize: co-authored joins without pyphen" \
+        "coauthored paper" "$(normalize_text $'co-\nauthored paper')"
 
-    check "normalize: pyphen is loaded (not fallback)" \
-        "yes" "$("$VENV_PYTHON" -c 'from normalize import _PYPHEN; print("yes" if _PYPHEN else "no")' 2>/dev/null)"
+    check "normalize: forests joins (inflected form)" \
+        "forests" "$(normalize_text $'for-\nests')"
 
     # Line break rejoining
     check "normalize: rejoin mid-sentence line break" \
@@ -4421,6 +4421,14 @@ if type normalize_text &>/dev/null; then
 
     check "normalize: bare citation comma+range" \
         "the results were" "$(normalize_text "the results1,3-5 were")"
+
+    # Glued superscript citations (PDF artifact: digits stuck to word end)
+    check "normalize: glued citation forests11." \
+        "forests." "$(normalize_text 'forests11.')"
+    check "normalize: glued citation preserved sqlite3" \
+        "sqlite3" "$(normalize_text 'sqlite3')"
+    check "normalize: glued citation preserved omega3" \
+        "omega3 fatty" "$(normalize_text 'omega3 fatty')"
 
     check "normalize: bracketed range with en-dash" \
         "the results were" "$(normalize_text "the results [1–8] were")"

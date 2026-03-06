@@ -6,11 +6,6 @@ Each front-end converts its source format into clean prose.
 The back-end never knows the source.
 """
 import re, sys, unicodedata as _ud, ftfy
-try:
-    import pyphen as _pyphen_mod
-    _PYPHEN = _pyphen_mod.Pyphen(lang='en_US')
-except ImportError:
-    _PYPHEN = None
 
 # ── Shared data (used by front-ends and back-end) ────────────────
 
@@ -832,11 +827,6 @@ def _frontend_pdf(t):
             return left + '-' + right
         if left.lower() in _COMPOUND_PREFIXES:
             return left + '-' + right
-        if _PYPHEN is not None:
-            joined = left + right
-            if len(left) in _PYPHEN.positions(joined.lower()):
-                return joined
-            return left + '-' + right
         return left + right
     t = re.sub(r'(\S+)-\n(\w+)', _hyph_check, t)
     # Protect paragraph breaks (2+ newlines), rejoin the rest.
@@ -846,6 +836,8 @@ def _frontend_pdf(t):
     # Superscript citations copied from PDF with a space: "estimates 2 ." or "rates 1,3,5 ."
     # The space before punctuation is the telltale PDF superscript extraction artifact.
     t = re.sub(r'(?<=[a-z]) (\d{1,3}(?:\s*,\s*\d{1,3})*)(?= [.,;:?!])', '', t)
+    # Glued superscript citations: forests11. → forests.
+    t = re.sub(r'(?<=[a-z]{4})\d{2,3}(?=[.,;:?!)\]\s]|$)', '', t)
     # Scientific notation: 1.5 x 10^-3 spoken as full phrase.
     def _sci(m):
         raw = m.group(2)
