@@ -31,7 +31,7 @@ struct Config {
     var speed:           Double = 1.0
 
     // Inter-sentence pause (milliseconds at 1.0x speed, scales with speed)
-    var sentencePause:   Int    = 500
+    var sentencePause:   Int    = 400
 
     static func load() -> Config {
         var c = Config()
@@ -1118,7 +1118,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         alert.addButton(withTitle: "Cancel")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 22))
         field.stringValue = String(config.sentencePause)
-        field.placeholderString = "e.g. 500"
+        field.placeholderString = "e.g. 400"
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }

@@ -4385,8 +4385,8 @@ rm -f "$_TEST_WAV"
 section "Sentence pause config"
 
 # speak.sh: SENTENCE_PAUSE variable with env > config > default priority
-check "speak.sh: SENTENCE_PAUSE default is 500" \
-    "yes" "$(grep -q 'SENTENCE_PAUSE:-500' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "speak.sh: SENTENCE_PAUSE default is 400" \
+    "yes" "$(grep -q 'SENTENCE_PAUSE:-400' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "speak.sh: SENTENCE_PAUSE validated as numeric" \
     "yes" "$(grep -q '_validate_num SENTENCE_PAUSE' "$SPEAK_SH" && echo "yes" || echo "no")"
@@ -4402,7 +4402,7 @@ check "speak.sh: first sentence gets zero pause" \
 
 # Speak11.swift: sentencePause config field
 check "Speak11.swift: sentencePause config field" \
-    "yes" "$(grep -q 'var sentencePause.*Int.*= 500' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'var sentencePause.*Int.*= 400' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
 check "Speak11.swift: SENTENCE_PAUSE in config load" \
     "yes" "$(grep -q 'case "SENTENCE_PAUSE"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"

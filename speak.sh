@@ -42,14 +42,14 @@ fi
 
 SPEED="${_ENV_SPEED:-${SPEED:-1.0}}"
 LOCAL_SPEED="${_ENV_LOCAL_SPEED:-${LOCAL_SPEED:-1.0}}"
-SENTENCE_PAUSE="${_ENV_SENTENCE_PAUSE:-${SENTENCE_PAUSE:-500}}"
+SENTENCE_PAUSE="${_ENV_SENTENCE_PAUSE:-${SENTENCE_PAUSE:-400}}"
 
 # ── Validate numeric config values ───────────────────────────────
 # Prevents malformed JSON if config is manually edited with bad values.
 _validate_num() { [[ "$2" =~ ^[0-9]*\.?[0-9]+$ ]] && echo "$2" || echo "$3"; }
 SPEED=$(_validate_num SPEED "$SPEED" "1.0")
 LOCAL_SPEED=$(_validate_num LOCAL_SPEED "$LOCAL_SPEED" "1.0")
-SENTENCE_PAUSE=$(_validate_num SENTENCE_PAUSE "$SENTENCE_PAUSE" "500")
+SENTENCE_PAUSE=$(_validate_num SENTENCE_PAUSE "$SENTENCE_PAUSE" "400")
 if [ "$TTS_BACKEND" = "elevenlabs" ] || [ "$TTS_BACKEND" = "auto" ]; then
     STABILITY=$(_validate_num STABILITY "$STABILITY" "0.5")
     SIMILARITY_BOOST=$(_validate_num SIMILARITY_BOOST "$SIMILARITY_BOOST" "0.75")
