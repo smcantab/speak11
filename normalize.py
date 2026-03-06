@@ -902,6 +902,19 @@ def _phase0(t):
 def _phaseA(t):
     """Phase A: Noise removal (URLs, DOIs, chemicals, citations)."""
     t = _CHEM_RE.sub(lambda m: _CHEM[m.group()], t)
+    # Bare URLs (no protocol): go.nature.com/4rzrnyx → "go dot nature dot com slash 4rzrnyx"
+    _TLDS = r'(?:com|org|net|edu|io|gov|co|uk|de|fr|jp|au|ca|nl|ch|it|es|info|me|dev|app|ai)'
+    def _verbalize_url(m):
+        s = m.group()
+        trail = ''
+        while s and s[-1] in '.,;:?!)\]\x22\x27':
+            trail = s[-1] + trail
+            s = s[:-1]
+        s = s.replace('/', ' slash ')
+        s = s.replace('.', ' dot ')
+        return s + trail
+    t = re.sub(r'(?<!//)(?<!/)(?<!@)\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+' + _TLDS + r'\b(?:/\S*)?',
+               _verbalize_url, t, flags=re.IGNORECASE)
     # URLs and DOIs.
     t = re.sub(r'https?://\S+', '', t)
     t = re.sub(r'(?i)\bdoi:\s*\S+', '', t)

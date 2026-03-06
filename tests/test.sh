@@ -4838,6 +4838,26 @@ if type normalize_text &>/dev/null; then
     check "normalize: URL not eating surrounding text" \
         "See for more." "$(normalize_text "See https://example.com for more.")"
 
+    check "normalize: bare URL verbalized" \
+        "visit go dot nature dot com slash 4rzrnyx for details." \
+        "$(normalize_text "visit go.nature.com/4rzrnyx for details.")"
+
+    check "normalize: bare domain verbalized" \
+        "see example dot com" \
+        "$(normalize_text "see example.com")"
+
+    check "normalize: bare URL with trailing period preserved" \
+        "go dot nature dot com slash 4rzrnyx." \
+        "$(normalize_text "go.nature.com/4rzrnyx.")"
+
+    check "normalize: bare URL with path" \
+        "docs dot python dot org slash 3 slash library" \
+        "$(normalize_text "docs.python.org/3/library")"
+
+    check "normalize: email address not verbalized as URL" \
+        "contact user@example.com" \
+        "$(normalize_text "contact user@example.com")"
+
     # Private Use Area characters (math font garbage)
     check "normalize: strip PUA characters" \
         "the result is clear" "$(normalize_text $'the result \xee\x80\x80is clear')"
