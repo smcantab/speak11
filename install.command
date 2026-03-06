@@ -271,13 +271,13 @@ if [ ! -d "$_VENV_DIR" ]; then
         spin "Setting up text normalization…"
         python3 -m venv "$_VENV_DIR" >> "$_LOG_FILE" 2>&1 && \
             "$_VENV_DIR/bin/pip" install --upgrade pip >> "$_LOG_FILE" 2>&1 && \
-            "$_VENV_DIR/bin/pip" install ftfy pylatexenc >> "$_LOG_FILE" 2>&1 && \
+            "$_VENV_DIR/bin/pip" install ftfy pylatexenc pyphen >> "$_LOG_FILE" 2>&1 && \
             step "Text normalization ready" || \
             printf '  \033[33m⚠\033[0m  Could not install text normalization (non-fatal)\n'
         unspin
     fi
-elif ! "$_VENV_DIR/bin/python3" -c "import ftfy; import pylatexenc" 2>/dev/null; then
-    "$_VENV_DIR/bin/pip" install ftfy pylatexenc >> "$_LOG_FILE" 2>&1 || true
+elif ! "$_VENV_DIR/bin/python3" -c "import ftfy; import pylatexenc; import pyphen" 2>/dev/null; then
+    "$_VENV_DIR/bin/pip" install ftfy pylatexenc pyphen >> "$_LOG_FILE" 2>&1 || true
     step "Text normalization updated"
 fi
 

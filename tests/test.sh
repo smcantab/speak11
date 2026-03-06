@@ -44,12 +44,12 @@ _STAMP="$DEV_VENV/.dep-stamp"
 _DEP_HASH=$(cat "$SCRIPT_DIR/install-local.sh" "$SCRIPT_DIR/install.command" | shasum | cut -d' ' -f1)
 _bootstrap_venv() {
     if VENV_DIR="$DEV_VENV" bash "$SCRIPT_DIR/install-local.sh" 2>&1; then
-        "$DEV_VENV/bin/pip" install --quiet pylatexenc
+        true
     else
         printf "  Full install failed, creating lightweight venv ...\n"
         rm -rf "$DEV_VENV"
         python3 -m venv "$DEV_VENV"
-        "$DEV_VENV/bin/pip" install --quiet ftfy pylatexenc
+        "$DEV_VENV/bin/pip" install --quiet ftfy pylatexenc pyphen
     fi
     echo "$_DEP_HASH" > "$_STAMP"
 }
@@ -4277,6 +4277,24 @@ if type normalize_text &>/dev/null; then
     check "normalize: hyphenation mid-sentence" \
         "end-of-line hyphenation works" "$(normalize_text $'end-of-line hy-\nphenation works')"
 
+    check "normalize: compound hyphen year-to-year" \
+        "year-to-year growth" "$(normalize_text $'year-to-\nyear growth')"
+
+    check "normalize: compound hyphen self-consistent" \
+        "self-consistent model" "$(normalize_text $'self-\nconsistent model')"
+
+    check "normalize: compound hyphen state-of-the-art" \
+        "state-of-the-art design" "$(normalize_text $'state-of-the-\nart design')"
+
+    check "normalize: non-linear preserved" \
+        "non-linear model" "$(normalize_text $'non-\nlinear model')"
+
+    check "normalize: co-authored preserved (pyphen)" \
+        "co-authored paper" "$(normalize_text $'co-\nauthored paper')"
+
+    check "normalize: pyphen is loaded (not fallback)" \
+        "yes" "$("$VENV_PYTHON" -c 'from normalize import _PYPHEN; print("yes" if _PYPHEN else "no")' 2>/dev/null)"
+
     # Line break rejoining
     check "normalize: rejoin mid-sentence line break" \
         "The quick brown fox jumped." "$(normalize_text $'The quick brown\nfox jumped.')"
@@ -4366,6 +4384,37 @@ if type normalize_text &>/dev/null; then
 
     check "normalize: bare single citation" \
         "was shown previously1" "$(normalize_text "was shown previously1")"
+
+    check "normalize: PDF superscript citation with space" \
+        "according to current estimates." "$(normalize_text "according to current estimates 2 .")"
+
+    check "normalize: PDF superscript citation preserves 25,000" \
+        "can exceed 25,000, according to current estimates." \
+        "$(normalize_text "can exceed 25,000, according to current estimates 2 .")"
+
+    check "normalize: PDF superscript multi-citation with space" \
+        "observed rates." "$(normalize_text "observed rates 1,3,5 .")"
+
+    check "normalize: no false positive on chapter 3" \
+        "chapter 3." "$(normalize_text "chapter 3.")"
+
+    check "normalize: mid-sentence citation stripped (study 4 that)" \
+        "the study that examined" "$(normalize_text "the study 4 that examined")"
+
+    check "normalize: mid-sentence citation stripped (results 8 showed)" \
+        "the results showed improvement" "$(normalize_text "the results 8 showed improvement")"
+
+    check "normalize: keep real number (about 5 meters)" \
+        "about 5 meters" "$(normalize_text "about 5 meters")"
+
+    check "normalize: keep real number (type 2 diabetes)" \
+        "type 2 diabetes" "$(normalize_text "type 2 diabetes")"
+
+    check "normalize: keep labeled number (Chapter 3 is)" \
+        "Chapter 3 is about" "$(normalize_text "Chapter 3 is about")"
+
+    check "normalize: keep range number (between 2 and 4)" \
+        "between 2 and 4 is normal" "$(normalize_text "between 2 and 4 is normal")"
 
     check "normalize: bare citation comma list" \
         "the results were" "$(normalize_text "the results1,2,3 were")"

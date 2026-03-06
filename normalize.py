@@ -6,6 +6,11 @@ Each front-end converts its source format into clean prose.
 The back-end never knows the source.
 """
 import re, sys, unicodedata as _ud, ftfy
+try:
+    import pyphen as _pyphen_mod
+    _PYPHEN = _pyphen_mod.Pyphen(lang='en_US')
+except ImportError:
+    _PYPHEN = None
 
 # ── Shared data (used by front-ends and back-end) ────────────────
 
@@ -13,6 +18,35 @@ _SD = str.maketrans(
     '\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079\u2070',
     '1234567890')
 _SUP_RE = r'[\u00b9\u00b2\u00b3\u2074-\u2079\u2070]+'
+
+_COMPOUND_PREFIXES = frozenset({
+    'self','non','quasi','semi','well','ill','all','half','cross','ex',
+})
+
+# Function-word gate for stripping PDF superscript citations mid-sentence.
+_CITATION_FOLLOWERS = frozenset({
+    'that','which','and','or','but','if','as','so','yet',
+    'the','this','these','those','it','they','we','he','she','its',
+    'has','have','had','was','were','is','are','been','can','could',
+    'would','should','may','might','shall','will','did','does','do',
+    'also','not','often','still','even','only','just',
+    'in','on','to','for','at','by','with','from','of',
+    'showed','found','reported','observed','noted','demonstrated',
+    'suggested','indicated','revealed','confirmed','concluded',
+})
+_NUM_CONTEXT_WORDS = frozenset({
+    'chapter','section','step','phase','stage','type','table','figure',
+    'page','group','item','class','level','grade','round','trial',
+    'volume','number','part','act','year','day','week','month',
+    'case','rule','task','test','dose','factor','version','model',
+    'least','most','only','approximately','about','nearly','almost',
+    'over','under','around','exactly','roughly','fewer','more',
+    'and','or','to','from','through','between','versus','times','equals',
+    'another','other','further','additional','remaining',
+    'next','last','first','every','each',
+})
+_CF_ALT = '|'.join(sorted(_CITATION_FOLLOWERS, key=len, reverse=True))
+_CITE_PAT = re.compile(r'(\w+) (\d{1,2}) (?=(' + _CF_ALT + r')\b)')
 
 _FRAC = {'\u00bd':'one half','\u2153':'one third','\u00bc':'one quarter',
   '\u00be':'three quarters','\u2154':'two thirds','\u2155':'one fifth',
@@ -791,12 +825,27 @@ def _frontend_pdf(t):
         t = t.replace(_f, ' ' + _w + ' ')
     # Strip trailing whitespace on each line.
     t = re.sub(r'[ \t]+$', '', t, flags=re.MULTILINE)
-    # Rejoin hyphenated word splits at line ends.
-    t = re.sub(r'(\w)-\n(\w)', r'\1\2', t)
+    # Rejoin hyphenated word splits at line ends (preserve compound hyphens).
+    def _hyph_check(m):
+        left, right = m.group(1), m.group(2)
+        if '-' in left:
+            return left + '-' + right
+        if left.lower() in _COMPOUND_PREFIXES:
+            return left + '-' + right
+        if _PYPHEN is not None:
+            joined = left + right
+            if len(left) in _PYPHEN.positions(joined.lower()):
+                return joined
+            return left + '-' + right
+        return left + right
+    t = re.sub(r'(\S+)-\n(\w+)', _hyph_check, t)
     # Protect paragraph breaks (2+ newlines), rejoin the rest.
     t = re.sub(r'\n{2,}', '\x00', t)
     t = re.sub(r'(?<![.!?:\x22\x27])\n', ' ', t)
     t = t.replace('\x00', '\n\n')
+    # Superscript citations copied from PDF with a space: "estimates 2 ." or "rates 1,3,5 ."
+    # The space before punctuation is the telltale PDF superscript extraction artifact.
+    t = re.sub(r'(?<=[a-z]) (\d{1,3}(?:\s*,\s*\d{1,3})*)(?= [.,;:?!])', '', t)
     # Scientific notation: 1.5 x 10^-3 spoken as full phrase.
     def _sci(m):
         raw = m.group(2)
@@ -865,6 +914,13 @@ def _phaseA(t):
     t = re.sub(r'(?<=[a-z]{4})\d+(?:\s*[,\u2013\u2014-]\s*\d+)+(?=[\s.,;:?!\x27\x22)\]]|$)', '', t)
     t = re.sub(r'(?<=et al\.)\d+(?:\s*[,\u2013\u2014-]\s*\d+)*', '', t)
     t = re.sub(r'\s*\[\d+(?:\s*[,;\u2013\u2014-]\s*\d+)*\]\s*', ' ', t)
+    # Mid-sentence superscript citations: "study 4 that" → "study that".
+    def _check_cite(m):
+        prev = m.group(1).lower()
+        if prev in _NUM_CONTEXT_WORDS or m.group(1).isdigit():
+            return m.group(0)
+        return m.group(1) + ' '
+    t = _CITE_PAT.sub(_check_cite, t)
     _MONTHS = '(?:January|February|March|April|May|June|July|August|September|October|November|December)'
     t = re.sub(r'\s*\((?:(?!' + _MONTHS + r')[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+(?!' + _MONTHS + r')[A-Z][a-z]+))?(?:,?\s*\d{4})\s*(?:;\s*(?!' + _MONTHS + r')[A-Z][a-z]+(?:\s+(?:et\s+al\.|and\s+(?!' + _MONTHS + r')[A-Z][a-z]+))?(?:,?\s*\d{4})\s*)*)\)\s*', ' ', t)
     return t

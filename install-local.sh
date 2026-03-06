@@ -138,7 +138,7 @@ else
     set +e
     "$VENV_DIR/bin/pip" install --upgrade pip 2>&1
     "$VENV_DIR/bin/pip" install mlx-audio soundfile sounddevice scipy loguru \
-        "misaki==0.8.4" num2words spacy phonemizer-fork espeakng_loader pysbd ftfy 2>&1
+        "misaki==0.8.4" num2words spacy phonemizer-fork espeakng_loader pysbd ftfy pylatexenc pyphen 2>&1
     pip_exit=$?
     set -e
     if [ $pip_exit -ne 0 ]; then
