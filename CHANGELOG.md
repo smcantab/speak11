@@ -24,7 +24,6 @@
 - Audio queue player eliminates ~970ms inter-sentence overhead (down to ~30ms hardware latency)
 - Test suite runs in ~36s, down from ~2min, with section filtering (`--fast`, `--section`)
 - ftfy is now a required dependency for reliable Unicode normalization
-- Always uses the venv Python interpreter, never falls back to system python3
 
 ### Bug fixes
 
@@ -51,6 +50,7 @@
 ### Infrastructure
 
 - Repo-local dev venv for the test suite
+- Always uses the venv Python interpreter, never falls back to system python3
 - `VENV_PYTHON` guards on `split_sentences` and `run_local_tts`
 - Test suite expanded from ~200 to 1066 tests
 - Profiling script (`tests/profile.sh`) for end-to-end pipeline timing
