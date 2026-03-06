@@ -981,6 +981,37 @@ def _phaseB(t):
         label = _PLURALS.get(m.group(1), m.group(1))
         return label + ' ' + m.group(2) + ' through ' + m.group(3)
     t = re.sub(r'\b(Figures?|Equations?|References?|Sections?|Chapters?|Numbers?|figures?|equations?|references?|sections?|chapters?|numbers?)\s*(\d+)\s*[-\u2013\u2014]\s*(\d+)', _abbr_range, t)
+    # Currency: US$10-million → 10 million US dollars
+    _CURR_SYM = {
+        '$': ('dollar', 'dollars'), '€': ('euro', 'euros'),
+        '£': ('pound', 'pounds'), '¥': ('yen', 'yen'), '₹': ('rupee', 'rupees'),
+    }
+    _CURR_PFX = {'US':'US','A':'Australian','AU':'Australian',
+                 'C':'Canadian','CA':'Canadian','NZ':'New Zealand',
+                 'HK':'Hong Kong','S':'Singapore'}
+    _CURR_PFX_ALT = '|'.join(sorted(_CURR_PFX, key=len, reverse=True))
+    _CURR_SYM_ALT = '|'.join(re.escape(s) for s in _CURR_SYM)
+    _CURR_RE = re.compile(
+        r'(?<![A-Za-z])'
+        r'(?:(' + _CURR_PFX_ALT + r')\s*)?'
+        r'(' + _CURR_SYM_ALT + r')\s*'
+        r'(\d[\d,]*(?:\.\d+)?)'
+        r'(?:(?:[-\u2010\u2011\u2013]\s*|\s+)'
+        r'([Mm]illion|[Bb]illion|[Tt]rillion|[Tt]housand))?'
+    )
+    def _curr(m):
+        pfx, sym, amt, mult = m.group(1), m.group(2), m.group(3), m.group(4)
+        singular, plural = _CURR_SYM[sym]
+        is_one = amt in ('1', '1.0', '1.00')
+        word = singular if is_one and not mult else plural
+        parts = [amt]
+        if mult:
+            parts.append(mult.lower())
+        if pfx:
+            parts.append(_CURR_PFX[pfx])
+        parts.append(word)
+        return ' '.join(parts)
+    t = _CURR_RE.sub(_curr, t)
     # Numeric ranges: en-dash/em-dash between digits -> X to Y.
     t = re.sub(r'(\d[\d.,]*)\s*[\u2013\u2014]\s*(\d[\d.,]*)', r'\1 to \2', t)
     # Remaining en/em-dash (pauses, asides).

@@ -5321,6 +5321,34 @@ if type normalize_text &>/dev/null; then
         "The index fell 2.3 percent." \
         "$(normalize_text 'The index fell 2.3%.')"
 
+    # Currency normalization
+    check "normalize: US\$10-million" \
+        "10 million US dollars" "$(normalize_text 'US$10-million')"
+    check "normalize: \$500-billion" \
+        "500 billion dollars" "$(normalize_text '$500-billion')"
+    check "normalize: €2.5 million" \
+        "2.5 million euros" "$(normalize_text '€2.5 million')"
+    check "normalize: £100" \
+        "100 pounds" "$(normalize_text '£100')"
+    check "normalize: US\$10" \
+        "10 US dollars" "$(normalize_text 'US$10')"
+    check "normalize: A\$3.5-billion" \
+        "3.5 billion Australian dollars" "$(normalize_text 'A$3.5-billion')"
+    check "normalize: ¥500 million" \
+        "500 million yen" "$(normalize_text '¥500 million')"
+    check "normalize: HK\$2-million" \
+        "2 million Hong Kong dollars" "$(normalize_text 'HK$2-million')"
+    check "normalize: \$10.50" \
+        "10.50 dollars" "$(normalize_text '$10.50')"
+    check "normalize: \$1,000,000" \
+        "1,000,000 dollars" "$(normalize_text '$1,000,000')"
+    check "normalize: \$1 singular" \
+        "1 dollar" "$(normalize_text '$1')"
+    check "normalize: €1 singular" \
+        "1 euro" "$(normalize_text '€1')"
+    check "normalize: ¥1 uncountable" \
+        "1 yen" "$(normalize_text '¥1')"
+
     check "normalize: tech terms preserved" \
         "Install sqlite3 and numpy2 via pip." \
         "$(normalize_text 'Install sqlite3 and numpy2 via pip.')"
@@ -5497,7 +5525,7 @@ For all $x \in \mathbb{R}$, $f(x)$ is continuous.
 \end{theorem}')"
 
     check "latex: escaped dollar in env not treated as math" \
-        'Theorem. The price is $5 to $10 per unit.' \
+        'Theorem. The price is 5 dollars to 10 dollars per unit.' \
         "$(normalize_text '\begin{theorem}
 The price is \$5 to \$10 per unit.
 \end{theorem}')"
@@ -5558,7 +5586,7 @@ We used X.')"
         "$(normalize_text 'Main text\footnote{extra detail} continues.')"
 
     check "latex: special characters" \
-        "Section: Test. AT&T costs \$5 and 100 percent done." \
+        "Section: Test. AT&T costs 5 dollars and 100 percent done." \
         "$(normalize_text '\section{Test}
 AT\&T costs \$5 and 100\% done.')"
 
@@ -6351,7 +6379,7 @@ where a = b')"
 
     # ── LaTeX special chars survive L4-L6 pipeline ──
     check "latex: ampersand survives pipeline" \
-        "Section: Test. AT&T costs \$5." \
+        "Section: Test. AT&T costs 5 dollars." \
         "$(normalize_text '\section{Test}
 AT\&T costs \$5.')"
 
