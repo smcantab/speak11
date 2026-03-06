@@ -46,6 +46,8 @@ Once installed, the **waveform icon** appears in your menu bar. On first launch 
 
 The waveform icon pulses while audio is being generated and played, so you always know it's working.
 
+Text copied from PDFs, LaTeX documents, and Markdown files is automatically cleaned up before reading -- math equations, SI units, Greek letters, citations, and formatting artifacts are converted to natural spoken language.
+
 Your API key is stored in your macOS Keychain — never written to a file.
 
 ## Settings
@@ -70,6 +72,12 @@ Click the **waveform icon** in the menu bar. The menu adapts to your setup — y
 |---------|---------|
 | **Voice** | 12 curated English voices (American and British) |
 | **Speed** | 0.5× to 2× |
+
+### Playback settings
+
+| Setting | Options |
+|---------|---------|
+| **Sentence Pause** | Milliseconds of silence between sentences (default 400ms). Scales inversely with speed -- at 2× speed, a 400ms pause becomes 200ms. Click the menu item and type any value; set to 0 for no pause. |
 
 Settings take effect immediately — no restart needed.
 
@@ -151,6 +159,7 @@ USE_SPEAKER_BOOST="true"
 SPEED="1.00"
 LOCAL_VOICE="bf_lily"
 LOCAL_SPEED="1.00"
+SENTENCE_PAUSE="400"
 ```
 
 ### Environment variables
@@ -164,6 +173,7 @@ export ELEVENLABS_MODEL_ID="eleven_multilingual_v2"
 export TTS_BACKEND="local"                     # "auto" (default), "elevenlabs", or "local"
 export LOCAL_VOICE="am_adam"                   # Kokoro voice ID
 export LOCAL_SPEED="1.25"                      # 0.5 to 2.0
+export SENTENCE_PAUSE="400"                    # inter-sentence pause (ms at 1× speed, default 400)
 export SPEAK11_IDLE_TIMEOUT="600"              # daemon idle shutdown (seconds, default 300)
 ```
 
