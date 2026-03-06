@@ -27,6 +27,7 @@
 
 ### Bug fixes
 
+- Bare URLs (`go.nature.com/4rzrnyx`) verbalized as "go dot nature dot com slash 4rzrnyx" so local TTS reads dots and slashes correctly
 - PDF mid-word newlines: text copied from PDFs no longer has spurious line breaks inside words and sentences
 - Compound hyphen rejoining across PDF line breaks
 - Superscript citations glued to sentence-ending periods (e.g., `result.²³` now strips cleanly)
