@@ -197,7 +197,7 @@
         Runs in your menu bar.
       </p>
       <div class="buttons">
-        <a href="download.html" class="cta">Download</a>
+        <a href="https://github.com/smcantab/speak11/releases/latest/download/speak11.zip" class="cta" id="dl">Download</a>
         <a href="https://github.com/smcantab/speak11" class="secondary">View on GitHub</a>
       </div>
       <p class="prereq">Requires macOS 13+. ElevenLabs needs an API key. Local TTS needs Apple Silicon.</p>
@@ -283,5 +283,20 @@
     <a href="https://elevenlabs.io/pricing">ElevenLabs pricing</a> ·
     macOS 13+
   </footer>
+  <script>
+    // Resolve versioned download URL on page load; fall back to speak11.zip href.
+    (function() {
+      var btn = document.getElementById('dl');
+      fetch('https://api.github.com/repos/smcantab/speak11/releases/latest')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var asset = (data.assets || []).find(function(a) {
+            return /^speak11-v.*\.zip$/.test(a.name);
+          });
+          if (asset) btn.href = asset.browser_download_url;
+        })
+        .catch(function() {});  // keep original href as fallback
+    })();
+  </script>
 </body>
 </html>
