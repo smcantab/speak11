@@ -4432,6 +4432,41 @@ check "speak11-audio.swift: asyncAfter for pause delay" \
 check "speak11-audio.swift: STATUS_FILE written after pause (inside startPlaying)" \
     "yes" "$(grep -q 'let startPlaying' "$SCRIPT_DIR/speak11-audio.swift" && echo "yes" || echo "no")"
 
+# ── Release notes consistency ────────────────────────────────────
+
+section "Release notes consistency"
+
+# Verify CHANGELOG.md matches GitHub release notes (minus the footer).
+# This ensures the CHANGELOG stays the single source of truth.
+_CHANGELOG="$SCRIPT_DIR/CHANGELOG.md"
+
+check "CHANGELOG.md exists" \
+    "yes" "$([ -f "$_CHANGELOG" ] && echo "yes" || echo "no")"
+
+check "CHANGELOG.md has v1.1.0 section" \
+    "yes" "$(grep -q '^## v1.1.0' "$_CHANGELOG" && echo "yes" || echo "no")"
+
+check "release.sh exists" \
+    "yes" "$([ -f "$SCRIPT_DIR/release.sh" ] && echo "yes" || echo "no")"
+
+check "release.sh extracts notes from CHANGELOG.md" \
+    "yes" "$(grep -q 'CHANGELOG' "$SCRIPT_DIR/release.sh" && echo "yes" || echo "no")"
+
+# If gh is available and the release exists, verify content matches
+if command -v gh &>/dev/null && gh release view v1.1.0 &>/dev/null 2>&1; then
+    # Extract CHANGELOG body for v1.1.0 (between ## v1.1.0 and next ## v heading)
+    # Trim leading/trailing blank lines with awk
+    _CL_BODY=$(awk '/^## v1.1.0/{found=1;next} found&&/^## v/{exit} found{print}' "$_CHANGELOG" \
+        | awk 'NF{p=1} p{lines[++n]=$0} END{while(n>0&&lines[n]=="")n--;for(i=1;i<=n;i++)print lines[i]}')
+    # Extract GitHub release body, strip the footer (everything from last --- onward)
+    _GH_BODY=$(gh release view v1.1.0 --json body --jq '.body' \
+        | awk '/^---$/{skip=1} skip==0{print}' \
+        | awk 'NF{p=1} p{lines[++n]=$0} END{while(n>0&&lines[n]=="")n--;for(i=1;i<=n;i++)print lines[i]}')
+
+    check "CHANGELOG v1.1.0 matches GitHub release (minus footer)" \
+        "yes" "$([ "$_CL_BODY" = "$_GH_BODY" ] && echo "yes" || echo "no")"
+fi
+
 # ── Text normalization (PDF cleanup) ─────────────────────────────
 
 section "Text normalization (PDF cleanup)"
