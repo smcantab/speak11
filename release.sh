@@ -57,19 +57,26 @@ NOTES="$NOTES
 See the [README](https://github.com/smcantab/speak11#readme) for full documentation."
 
 # ── Build zip ────────────────────────────────────────────────────────
+# Two assets: versioned name (speak11-v1.2.0.zip) for the release page,
+# plus a stable "speak11.zip" so releases/latest/download/speak11.zip works.
 _TMPDIR=$(mktemp -d)
-ZIP="$_TMPDIR/speak11.zip"
+ASSET_NAME="speak11-${TAG}.zip"
+ZIP="$_TMPDIR/$ASSET_NAME"
+STABLE_ZIP="$_TMPDIR/speak11.zip"
 git -C "$SCRIPT_DIR" archive --format=zip --prefix=speak11/ HEAD -o "$ZIP"
+cp "$ZIP" "$STABLE_ZIP"
 
 # ── Create or update release ─────────────────────────────────────────
 if gh release view "$TAG" &>/dev/null; then
     echo "Updating existing release $TAG..."
     gh release edit "$TAG" --title "Speak11 $TAG" --notes "$NOTES"
+    # Remove old assets (both old and new naming conventions)
     gh release delete-asset "$TAG" speak11.zip --yes 2>/dev/null || true
-    gh release upload "$TAG" "$ZIP#speak11.zip"
+    gh release delete-asset "$TAG" "$ASSET_NAME" --yes 2>/dev/null || true
+    gh release upload "$TAG" "$ZIP" "$STABLE_ZIP"
 else
     echo "Creating draft release $TAG..."
-    gh release create "$TAG" "$ZIP#speak11.zip" \
+    gh release create "$TAG" "$ZIP" "$STABLE_ZIP" \
         --title "Speak11 $TAG" \
         --draft \
         --notes "$NOTES"
