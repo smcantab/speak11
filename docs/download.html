@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Downloading Speak11…</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; text-align: center; padding: 80px 24px; color: #1d1d1f; }
+    a { color: #0071e3; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    #status { margin-top: 16px; font-size: 0.95rem; color: #555; }
+  </style>
+</head>
+<body>
+  <p>Your download should start automatically.</p>
+  <p id="status">Looking up latest release…</p>
+  <noscript>
+    <p>JavaScript is required for automatic download. <a href="https://github.com/smcantab/speak11/releases/latest">Go to the releases page</a> to download manually.</p>
+  </noscript>
+  <script>
+    fetch('https://api.github.com/repos/smcantab/speak11/releases/latest')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var asset = (data.assets || []).find(function(a) {
+          return /^speak11-v.*\.zip$/.test(a.name);
+        });
+        if (asset) {
+          document.getElementById('status').textContent = 'Downloading ' + asset.name + '…';
+          window.location.href = asset.browser_download_url;
+        } else {
+          throw new Error('asset not found');
+        }
+      })
+      .catch(function() {
+        document.getElementById('status').innerHTML =
+          'Automatic download failed. <a href="https://github.com/smcantab/speak11/releases/latest">Go to the releases page</a> to download manually.';
+      });
+  </script>
+</body>
+</html>
