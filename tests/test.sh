@@ -4380,6 +4380,58 @@ fi
 rm -f "$_TEST_WAV"
 [ "$_QP_BIN" != "$HOME/.local/bin/speak11-audio" ] && rm -f "$_QP_BIN"
 
+# ── Sentence pause config ────────────────────────────────────────
+
+section "Sentence pause config"
+
+# speak.sh: SENTENCE_PAUSE variable with env > config > default priority
+check "speak.sh: SENTENCE_PAUSE default is 500" \
+    "yes" "$(grep -q 'SENTENCE_PAUSE:-500' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: SENTENCE_PAUSE validated as numeric" \
+    "yes" "$(grep -q '_validate_num SENTENCE_PAUSE' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: _PAUSE_MS computed with perl" \
+    "yes" "$(grep -q '_PAUSE_MS=.*perl.*SENTENCE_PAUSE' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: play_audio passes pause to queue player (6 fields)" \
+    "yes" "$(grep -q 'STATUS_FILE.*{3:-0}.*>&7' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: first sentence gets zero pause" \
+    "yes" "$(grep -q '_FIRST.*_THIS_PAUSE=0' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+# Speak11.swift: sentencePause config field
+check "Speak11.swift: sentencePause config field" \
+    "yes" "$(grep -q 'var sentencePause.*Int.*= 500' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Speak11.swift: SENTENCE_PAUSE in config load" \
+    "yes" "$(grep -q 'case "SENTENCE_PAUSE"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Speak11.swift: SENTENCE_PAUSE in config save" \
+    "yes" "$(grep -q 'SENTENCE_PAUSE=.*sentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Speak11.swift: editSentencePause handler" \
+    "yes" "$(grep -q 'func editSentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Speak11.swift: Sentence Pause menu item shows current value" \
+    "yes" "$(grep -q 'Sentence Pause.*sentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "Speak11.swift: Sentence Pause uses text input dialog" \
+    "yes" "$(awk '/func editSentencePause/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'NSTextField' && echo "yes" || echo "no")"
+
+# speak11-audio.swift: pause_ms field in protocol
+check "speak11-audio.swift: maxSplits is 5 (6 fields)" \
+    "yes" "$(grep -q 'maxSplits: 5' "$SCRIPT_DIR/speak11-audio.swift" && echo "yes" || echo "no")"
+
+check "speak11-audio.swift: pauseMs in PlayItem" \
+    "yes" "$(grep -q 'pauseMs.*Int' "$SCRIPT_DIR/speak11-audio.swift" && echo "yes" || echo "no")"
+
+check "speak11-audio.swift: asyncAfter for pause delay" \
+    "yes" "$(grep -q 'asyncAfter.*delay' "$SCRIPT_DIR/speak11-audio.swift" && echo "yes" || echo "no")"
+
+check "speak11-audio.swift: STATUS_FILE written after pause (inside startPlaying)" \
+    "yes" "$(grep -q 'let startPlaying' "$SCRIPT_DIR/speak11-audio.swift" && echo "yes" || echo "no")"
+
 # ── Text normalization (PDF cleanup) ─────────────────────────────
 
 section "Text normalization (PDF cleanup)"

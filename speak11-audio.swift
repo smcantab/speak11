@@ -54,7 +54,7 @@ func unmute() -> Bool {
 
 // ── play-queue: gapless audio queue player ───────────────────────
 // Reads tab-separated lines from stdin:
-//   filepath\tepoch\toffset\tsent_len\tstatus_file
+//   filepath\tepoch\toffset\tsent_len\tstatus_file\tpause_ms
 // Outputs to stdout:
 //   duration   (float, immediately after prepareToPlay)
 //   DONE       (after playback finishes)
@@ -66,6 +66,7 @@ private struct PlayItem {
     let offset: String
     let sentLen: String
     let statusFile: String
+    let pauseMs: Int
 }
 
 class QueuePlayer: NSObject, AVAudioPlayerDelegate {
@@ -77,7 +78,7 @@ class QueuePlayer: NSObject, AVAudioPlayerDelegate {
     func start() {
         DispatchQueue.global().async { [self] in
             while let line = readLine() {
-                let parts = line.split(separator: "\t", maxSplits: 4, omittingEmptySubsequences: false)
+                let parts = line.split(separator: "\t", maxSplits: 5, omittingEmptySubsequences: false)
                 guard parts.count >= 5 else { continue }
                 let path = String(parts[0])
                 let url = URL(fileURLWithPath: path)
@@ -87,12 +88,14 @@ class QueuePlayer: NSObject, AVAudioPlayerDelegate {
                 }
                 p.delegate = self
                 p.prepareToPlay()
+                let pauseMs = parts.count >= 6 ? (Int(parts[5]) ?? 0) : 0
                 let item = PlayItem(
                     player: p,
                     epoch: String(parts[1]),
                     offset: String(parts[2]),
                     sentLen: String(parts[3]),
-                    statusFile: String(parts[4])
+                    statusFile: String(parts[4]),
+                    pauseMs: pauseMs
                 )
                 DispatchQueue.main.async { [self] in
                     // Print duration immediately so bash can generate the next sentence
@@ -119,9 +122,19 @@ class QueuePlayer: NSObject, AVAudioPlayerDelegate {
         playing = true
         let item = queue.removeFirst()
         current = item.player  // retain while playing (delegate is weak)
-        let status = "\(item.epoch)\n\(String(format: "%.3f", item.player.duration))\n\(item.offset)\n\(item.sentLen)\n"
-        try? status.write(toFile: item.statusFile, atomically: true, encoding: .utf8)
-        item.player.play()
+
+        let startPlaying = {
+            let status = "\(item.epoch)\n\(String(format: "%.3f", item.player.duration))\n\(item.offset)\n\(item.sentLen)\n"
+            try? status.write(toFile: item.statusFile, atomically: true, encoding: .utf8)
+            item.player.play()
+        }
+
+        let delay = Double(item.pauseMs) / 1000.0
+        if delay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: startPlaying)
+        } else {
+            startPlaying()
+        }
     }
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {

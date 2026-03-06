@@ -18,6 +18,7 @@ _ENV_TTS_BACKENDS_INSTALLED="${TTS_BACKENDS_INSTALLED:-}"
 _ENV_LOCAL_VOICE="${LOCAL_VOICE:-}"
 _ENV_LOCAL_SPEED="${LOCAL_SPEED:-}"
 _ENV_SPEED="${SPEED:-}"
+_ENV_SENTENCE_PAUSE="${SENTENCE_PAUSE:-}"
 
 # Load settings written by the menu bar settings app.
 _CONFIG="$HOME/.config/speak11/config"
@@ -41,12 +42,14 @@ fi
 
 SPEED="${_ENV_SPEED:-${SPEED:-1.0}}"
 LOCAL_SPEED="${_ENV_LOCAL_SPEED:-${LOCAL_SPEED:-1.0}}"
+SENTENCE_PAUSE="${_ENV_SENTENCE_PAUSE:-${SENTENCE_PAUSE:-500}}"
 
 # ── Validate numeric config values ───────────────────────────────
 # Prevents malformed JSON if config is manually edited with bad values.
 _validate_num() { [[ "$2" =~ ^[0-9]*\.?[0-9]+$ ]] && echo "$2" || echo "$3"; }
 SPEED=$(_validate_num SPEED "$SPEED" "1.0")
 LOCAL_SPEED=$(_validate_num LOCAL_SPEED "$LOCAL_SPEED" "1.0")
+SENTENCE_PAUSE=$(_validate_num SENTENCE_PAUSE "$SENTENCE_PAUSE" "500")
 if [ "$TTS_BACKEND" = "elevenlabs" ] || [ "$TTS_BACKEND" = "auto" ]; then
     STABILITY=$(_validate_num STABILITY "$STABILITY" "0.5")
     SIMILARITY_BOOST=$(_validate_num SIMILARITY_BOOST "$SIMILARITY_BOOST" "0.75")
@@ -401,8 +404,8 @@ play_audio() {
     local _epoch_int=$(( ${_BASE_EPOCH%%.*} + SECONDS - _BASE_SECONDS ))
     local _epoch="${_epoch_int}.${_BASE_EPOCH#*.}"
     if [ -n "$_AUDIO_PLAYER_PID" ]; then
-        # Fast path: queue player (0ms inter-sentence gap)
-        printf '%s\t%s\t%s\t%s\t%s\n' "$TMP_FILE" "$_epoch" "${1:-0}" "${2:-0}" "$STATUS_FILE" >&7
+        # Fast path: queue player (near-zero inter-sentence gap + configurable pause)
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$TMP_FILE" "$_epoch" "${1:-0}" "${2:-0}" "$STATUS_FILE" "${3:-0}" >&7
         read -r _duration <&8   # blocks ~1ms (duration line)
         _AUDIO_PLAYING=true
     else
@@ -518,6 +521,14 @@ if [ -x "$_AUDIO_TOOL" ] && [ -z "$SPEAK11_NO_QUEUE_PLAYER" ]; then
     rm -f "$_AUDIO_IN" "$_AUDIO_OUT"  # safe: open FDs keep pipes alive after unlink
 fi
 
+# Compute effective inter-sentence pause (scales inversely with speed).
+if [ "$TTS_BACKEND" = "local" ]; then
+    _EFF_SPEED="$LOCAL_SPEED"
+else
+    _EFF_SPEED="$SPEED"
+fi
+_PAUSE_MS=$(/usr/bin/perl -e "printf '%d', $SENTENCE_PAUSE / $_EFF_SPEED")
+
 if [ "$TTS_BACKEND" = "local" ]; then
     # ── Local TTS (mlx-audio / Kokoro) ───────────────────────────
     # Pipeline: generate next sentence while the current one plays,
@@ -541,11 +552,12 @@ if [ "$TTS_BACKEND" = "local" ]; then
             _trace "wait_done"
             [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
             [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
+            if $_FIRST; then _THIS_PAUSE=0; else _THIS_PAUSE=$_PAUSE_MS; fi
             _FIRST=false
             _PREV_TMP_FILE="$TMP_FILE"
             _PREV_TMP_DIR="$TMP_DIR"
             _trace "play_start"
-            play_audio "$_OFFSET" "$_SENT_LEN"
+            play_audio "$_OFFSET" "$_SENT_LEN" "$_THIS_PAUSE"
             _trace "play_launched"
         fi
     done <<< "$_SENTENCES"
@@ -566,10 +578,11 @@ else
         wait_audio
         _trace "wait_done"
         [ -n "$_PREV_TMP_FILE" ] && rm -f "$_PREV_TMP_FILE"
+        if $_FIRST; then _THIS_PAUSE=0; else _THIS_PAUSE=$_PAUSE_MS; fi
         _FIRST=false
         _PREV_TMP_FILE="$TMP_FILE"
         _trace "play_start"
-        play_audio "$_OFFSET" "$_SENT_LEN"
+        play_audio "$_OFFSET" "$_SENT_LEN" "$_THIS_PAUSE"
         _trace "play_launched"
     done <<< "$_SENTENCES"
     wait_audio

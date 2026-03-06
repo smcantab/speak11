@@ -30,6 +30,9 @@ struct Config {
     // ElevenLabs speed (shared name kept for config compat)
     var speed:           Double = 1.0
 
+    // Inter-sentence pause (milliseconds at 1.0x speed, scales with speed)
+    var sentencePause:   Int    = 500
+
     static func load() -> Config {
         var c = Config()
         guard let raw = try? String(contentsOfFile: configPath, encoding: .utf8) else { return c }
@@ -58,6 +61,7 @@ struct Config {
             case "SPEED":                c.speed              = Double(value) ?? c.speed
             case "LOCAL_VOICE":          c.localVoice         = value
             case "LOCAL_SPEED":          c.localSpeed         = Double(value) ?? c.localSpeed
+            case "SENTENCE_PAUSE":       c.sentencePause      = Int(value) ?? c.sentencePause
             default: break
             }
         }
@@ -79,6 +83,7 @@ struct Config {
             "SPEED=\"\(String(format: "%.2f", speed))\"",
             "LOCAL_VOICE=\"\(localVoice)\"",
             "LOCAL_SPEED=\"\(String(format: "%.2f", localSpeed))\"",
+            "SENTENCE_PAUSE=\"\(sentencePause)\"",
         ]
         try? (lines.joined(separator: "\n") + "\n")
             .write(toFile: configPath, atomically: true, encoding: .utf8)
@@ -732,6 +737,15 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             menu.addItem(.separator())
         }
 
+        // Sentence Pause — playback-level setting, applies to all backends
+        let pauseItem = NSMenuItem(
+            title:  "Sentence Pause: \(config.sentencePause) ms",
+            action: #selector(editSentencePause),
+            keyEquivalent: "")
+        pauseItem.target = self
+        menu.addItem(pauseItem)
+        menu.addItem(.separator())
+
         // API Key + Credits — when ElevenLabs is active
         if showEl {
             // Credits display (hidden until successfully fetched)
@@ -1088,6 +1102,29 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         guard let str = sender.representedObject as? String,
               let val = Double(str) else { return }
         config.localSpeed = val
+        config.save()
+        rebuildMenu()
+        scheduleRespeak()
+    }
+
+    @objc private func editSentencePause() {
+        NSApp.setActivationPolicy(.regular)
+        defer { NSApp.setActivationPolicy(.accessory) }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Sentence Pause"
+        alert.informativeText = "Milliseconds of silence between sentences (at 1\u{00D7} speed). Set to 0 for no pause."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 22))
+        field.stringValue = String(config.sentencePause)
+        field.placeholderString = "e.g. 500"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let text = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard let val = Int(text), val >= 0 else { return }
+        config.sentencePause = val
         config.save()
         rebuildMenu()
         scheduleRespeak()
