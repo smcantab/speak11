@@ -57,9 +57,8 @@ NOTES="$NOTES
 See the [README](https://github.com/smcantab/speak11#readme) for full documentation."
 
 # ── Build zip ────────────────────────────────────────────────────────
-ZIP=$(mktemp "${TMPDIR:-/tmp/}speak11_XXXXXXXXXX")
-mv "$ZIP" "$ZIP.zip"
-ZIP="$ZIP.zip"
+_TMPDIR=$(mktemp -d)
+ZIP="$_TMPDIR/speak11.zip"
 git -C "$SCRIPT_DIR" archive --format=zip --prefix=speak11/ HEAD -o "$ZIP"
 
 # ── Create or update release ─────────────────────────────────────────
@@ -76,7 +75,7 @@ else
         --notes "$NOTES"
 fi
 
-rm -f "$ZIP"
+rm -rf "$_TMPDIR"
 
 echo ""
 echo "Release $TAG ready."
