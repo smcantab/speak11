@@ -838,6 +838,9 @@ def _frontend_pdf(t):
     t = re.sub(r'(?<=[a-z]) (\d{1,3}(?:\s*,\s*\d{1,3})*)(?= [.,;:?!])', '', t)
     # Glued superscript citations: forests11. → forests.
     t = re.sub(r'(?<=[a-z]{4})\d{2,3}(?=[.,;:?!)\]\s]|$)', '', t)
+    # Post-period superscript citations: automation.1,2 The → automation. The
+    # 4+ lowercase before period excludes abbreviations (Fig.3, Ref.4, Eq.2, Sect.7).
+    t = re.sub(r'(?<=[a-z]{4})\.\d{1,3}(?:\s*[,\u2013\u2014-]\s*\d{1,3})*(?=\s+[A-Z])', '.', t)
     # Scientific notation: 1.5 x 10^-3 spoken as full phrase.
     def _sci(m):
         raw = m.group(2)

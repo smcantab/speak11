@@ -4430,6 +4430,18 @@ if type normalize_text &>/dev/null; then
     check "normalize: glued citation preserved omega3" \
         "omega3 fatty" "$(normalize_text 'omega3 fatty')"
 
+    # Post-period glued citations (PDF artifact: digits after sentence-ending period)
+    check "normalize: post-period citation automation.1,2 The" \
+        "automation. The next" "$(normalize_text 'automation.1,2 The next')"
+    check "normalize: post-period citation forests.11 This" \
+        "forests. This is" "$(normalize_text 'forests.11 This is')"
+    check "normalize: post-period safe lowercase (data.5 meters)" \
+        "data.5 meters" "$(normalize_text 'data.5 meters')"
+    check "normalize: post-period safe abbreviation (Sect.7 The)" \
+        "Section7 The results" "$(normalize_text 'Sect.7 The results')"
+    check "normalize: for-ests11. end-to-end" \
+        "forests." "$(normalize_text $'for-\nests11.')"
+
     check "normalize: bracketed range with en-dash" \
         "the results were" "$(normalize_text "the results [1–8] were")"
 
