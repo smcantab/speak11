@@ -40,7 +40,7 @@ find_python() {
         p=$(command -v "$py" 2>/dev/null || echo "$py")
         [ -x "$p" ] || continue
         local ver
-        ver=$("$p" -c "import sys; print(sys.version_info >= (3,10))" 2>/dev/null) || continue
+        ver=$("$p" -c "import sys; print(sys.version_info >= (3,10) and sys.version_info < (3,13))" 2>/dev/null) || continue
         if [ "$ver" = "True" ]; then
             echo "$p"
             return 0
