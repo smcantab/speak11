@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug fixes
+
+- **Accented / non-ASCII characters preserved end-to-end** (#4): the menu bar app is launched by launchd with no locale set, so `pbpaste` and the Python helpers fell back to ASCII and stripped or transliterated diacritics (e.g. "Perché" → "Perch", "Zażółć" → "zazolc") before the text reached ElevenLabs. `speak.sh` now forces a UTF-8 locale (keeping an existing UTF-8 one), `normalize.py` and the inline sentence splitter reconfigure stdio to UTF-8 regardless of locale, and the Swift launcher exports `LC_ALL`/`LANG` to the speak.sh subprocess.
+
 ## v1.1.0
 
 ### Highlights

@@ -10,6 +10,17 @@
 # Requirements: afplay (built into macOS), curl (for ElevenLabs),
 #   venv python at ~/.local/share/speak11/venv (installed by install.command)
 
+# ── Force a UTF-8 locale ────────────────────────────────────────────
+# GUI apps launched via launchd inherit no locale (LANG/LC_* unset), so
+# `pbpaste` and Python default to ASCII and strip or transliterate
+# accented characters before the text reaches the TTS API (issue #4).
+# Keep an existing UTF-8 locale; otherwise force one so the whole
+# pipeline — clipboard read, text cleanup, sentence split — stays UTF-8.
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *.UTF-8|*.utf-8|*.UTF8|*.utf8) ;;        # already UTF-8 — leave it
+    *) export LC_ALL="en_US.UTF-8" LANG="en_US.UTF-8" ;;
+esac
+
 # ── Configuration ──────────────────────────────────────────────────
 
 # Save env vars before sourcing config (source overwrites same-named vars).
@@ -216,6 +227,11 @@ _trace() {
 split_sentences() {
     [ -x "$VENV_PYTHON" ] && "$VENV_PYTHON" -c "
 import re, sys
+try:
+    sys.stdin.reconfigure(encoding='utf-8')
+    sys.stdout.reconfigure(encoding='utf-8')
+except (AttributeError, ValueError):
+    pass
 text = sys.stdin.read().rstrip('\n')
 try:
     import pysbd

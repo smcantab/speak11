@@ -424,8 +424,19 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/bin/bash")
             task.arguments    = [speakPath]
+            // GUI apps launched via launchd inherit no locale, which makes
+            // pbpaste and Python strip accented characters (issue #4).
+            // Force UTF-8 unless the user already has a UTF-8 locale.
             task.environment  = ProcessInfo.processInfo.environment.merging(
                 ["SPEAK11_MUTE_CHECKED": "1"]) { _, new in new }
+            let inheritedLocale = task.environment?["LC_ALL"]
+                ?? task.environment?["LC_CTYPE"]
+                ?? task.environment?["LANG"] ?? ""
+            if !inheritedLocale.uppercased().contains("UTF-8")
+                && !inheritedLocale.uppercased().contains("UTF8") {
+                task.environment?["LC_ALL"] = "en_US.UTF-8"
+                task.environment?["LANG"]   = "en_US.UTF-8"
+            }
 
             if let text = text {
                 let pipe = Pipe()
