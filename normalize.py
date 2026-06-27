@@ -7,6 +7,15 @@ The back-end never knows the source.
 """
 import re, sys, unicodedata as _ud, ftfy
 
+# Force UTF-8 stdio regardless of the inherited locale. GUI apps launched
+# via launchd carry no LANG/LC_*, so Python would otherwise decode stdin /
+# encode stdout as ASCII and mangle accented characters (issue #4).
+try:
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):
+    pass
+
 # ── Shared data (used by front-ends and back-end) ────────────────
 
 _SD = str.maketrans(
