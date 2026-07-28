@@ -2,7 +2,7 @@
 # install-local.sh — Install mlx-audio for local TTS in Speak11
 #
 # Creates a Python venv at ~/.local/share/speak11/venv with mlx-audio and
-# all dependencies.  Requires Python 3.10+ — if none is found on the system,
+# all dependencies.  Requires Python 3.10–3.12 — if none is found on the system,
 # a standalone build is downloaded automatically.
 #
 # Called by install.command (during setup), speak.sh (on quota hit), or the
@@ -19,17 +19,17 @@ if [ "$(uname -m)" != "arm64" ]; then
     exit 1
 fi
 
-# ── Find Python 3.10+ ───────────────────────────────────────────
+# ── Find Python 3.10–3.12 ───────────────────────────────────────
 find_python() {
-    # Check common locations for Python 3.10+
-    for py in python3.13 python3.12 python3.11 python3.10 \
-              /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 \
+    # Check common locations for a Python version supported by mlx-audio deps.
+    # Python 3.13+ currently filters out misaki==0.8.4 from PyPI.
+    for py in python3.12 python3.11 python3.10 \
+              /opt/homebrew/bin/python3.12 \
               /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3.10 \
               /opt/homebrew/bin/python3 \
-              /usr/local/bin/python3.13 /usr/local/bin/python3.12 \
+              /usr/local/bin/python3.12 \
               /usr/local/bin/python3.11 /usr/local/bin/python3.10 \
               /usr/local/bin/python3 \
-              /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 \
               /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
               /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 \
               /Library/Frameworks/Python.framework/Versions/3.10/bin/python3 \
@@ -40,7 +40,7 @@ find_python() {
         p=$(command -v "$py" 2>/dev/null || echo "$py")
         [ -x "$p" ] || continue
         local ver
-        ver=$("$p" -c "import sys; print(sys.version_info >= (3,10))" 2>/dev/null) || continue
+        ver=$("$p" -c "import sys; print((3, 10) <= sys.version_info[:2] < (3, 13))" 2>/dev/null) || continue
         if [ "$ver" = "True" ]; then
             echo "$p"
             return 0
@@ -50,7 +50,7 @@ find_python() {
 }
 
 # ── Download standalone Python ────────────────────────────────────
-# If no system Python 3.10+ exists, fetch a standalone build from
+# If no compatible system Python exists, fetch a standalone build from
 # python-build-standalone (Astral).  ~17 MB download, ~80 MB extracted.
 STANDALONE_DIR="$HOME/.local/share/speak11/python"
 STANDALONE_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260211/cpython-3.12.12+20260211-aarch64-apple-darwin-install_only.tar.gz"
@@ -60,7 +60,7 @@ download_python() {
     # Return cached standalone if already downloaded
     if [ -x "$STANDALONE_DIR/bin/python3" ]; then
         local ver
-        ver=$("$STANDALONE_DIR/bin/python3" -c "import sys; print(sys.version_info >= (3,10))" 2>/dev/null) || true
+        ver=$("$STANDALONE_DIR/bin/python3" -c "import sys; print((3, 10) <= sys.version_info[:2] < (3, 13))" 2>/dev/null) || true
         if [ "$ver" = "True" ]; then
             echo "$STANDALONE_DIR/bin/python3"
             return 0
@@ -109,7 +109,7 @@ download_python() {
 PYTHON=$(find_python) || true
 
 if [ -z "$PYTHON" ]; then
-    echo "No Python 3.10+ found on system. Downloading standalone Python…"
+    echo "No Python 3.10–3.12 found on system. Downloading standalone Python…"
     PYTHON=$(download_python) || true
     if [ -z "$PYTHON" ]; then
         echo "Failed to set up Python." >&2
