@@ -20,3 +20,7 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+
+# Local scratch — personal sample text and working notes, never part of a commit
+test.txt
+PR_SUMMARY*.md

@@ -10,6 +10,15 @@
 # Requirements: afplay (built into macOS), curl (for ElevenLabs),
 #   venv python at ~/.local/share/speak11/venv (installed by install.command)
 
+# ── Character encoding ─────────────────────────────────────────────
+# pbpaste (and other tools) emit the standard C/ASCII encoding when no UTF-8
+# locale is set, which silently drops non-ASCII text (ß, umlauts, accents,
+# CJK). GUI-launched apps often have no LANG, so force a UTF-8 character type
+# for the whole pipeline. Only the encoding is changed (region-neutral); any
+# existing UTF-8 locale is left untouched.
+case "${LC_ALL:-}"   in C|POSIX) unset LC_ALL ;; esac
+case "${LC_CTYPE:-}" in ""|C|POSIX) export LC_CTYPE="UTF-8" ;; esac
+
 # ── Configuration ──────────────────────────────────────────────────
 
 # Save env vars before sourcing config (source overwrites same-named vars).
@@ -212,33 +221,115 @@ _trace() {
 }
 
 # ── Sentence splitter ────────────────────────────────────────────
-# Split text into sentences for streaming playback.
+# Split text into sentences for streaming playback.  Emits one record per
+# line: offset<TAB>length<TAB>text, where offset/length index the ORIGINAL
+# text (the caret-highlight and respeak-from-here range) while the text
+# field is flattened to a single line for the reader loops below.
+#
+# Pipeline: paragraphs -> language -> sentences.
+#   1. Cut on blank lines first.  A paragraph break is a sentence break in
+#      every language, so this needs no segmenter and no language -- and it
+#      keeps a heading or salutation that lacks terminal punctuation from
+#      being glued onto the paragraph that follows it.
+#   2. Detect the language of the whole text and of each paragraph in one
+#      speak11-audio call.  A paragraph only overrides the document language
+#      when it is confident; short fragments ('Status: offen' -> en 0.603)
+#      must not outvote the document.
+#   3. Segment each paragraph with the pySBD ruleset for its language.
+# Falls back to the regex splitter when pySBD is missing, and to German when
+# detection is unavailable: the German ruleset under-splits English mildly,
+# while the English ruleset over-splits German badly (a wrong mid-sentence
+# pause is far more audible than a missing one).
 split_sentences() {
     [ -x "$VENV_PYTHON" ] && "$VENV_PYTHON" -c "
-import re, sys
+import re, sys, subprocess
+
+AUDIO = sys.argv[1] if len(sys.argv) > 1 else ''
+LANGS = ('en', 'de')
+FALLBACK = 'de'
+MIN_CONFIDENCE = 0.85
+
 text = sys.stdin.read().rstrip('\n')
+
+# ── 1. Paragraphs ────────────────────────────────────────────────
+paras, pos = [], 0
+for m in re.finditer(r'\n[ \t]*\n', text):
+    if text[pos:m.start()].strip():
+        paras.append((pos, m.start()))
+    pos = m.end()
+if text[pos:].strip():
+    paras.append((pos, len(text)))
+if not paras:
+    paras = [(0, len(text))]
+
+# ── 2. Language ──────────────────────────────────────────────────
+def detect(records):
+    if not AUDIO or not records:
+        return []
+    try:
+        r = subprocess.run([AUDIO, 'detect-lang'],
+                           input='\x00'.join(records).encode('utf-8'),
+                           capture_output=True, timeout=5)
+        rows = r.stdout.decode('utf-8', 'replace').splitlines()
+    except Exception:
+        return []
+    out = []
+    for row in rows:
+        f = row.split('\t')
+        try:
+            out.append((f[0], float(f[1])))
+        except (IndexError, ValueError):
+            out.append(('und', 0.0))
+    return out
+
+seen = detect([text] + [text[a:b] for a, b in paras])
+doc_lang = seen[0][0] if seen and seen[0][0] in LANGS else FALLBACK
+para_langs = []
+for i in range(len(paras)):
+    lang, conf = seen[i + 1] if len(seen) > i + 1 else ('und', 0.0)
+    para_langs.append(lang if lang in LANGS and conf >= MIN_CONFIDENCE else doc_lang)
+
+# ── 3. Sentences ─────────────────────────────────────────────────
+# Numeric dates are atomic: no segmenter (pySBD included) keeps '30.06.'
+# intact, and a cut inside one drops a pause mid-date.  Every protection
+# below swaps one character for one character, so offsets measured on the
+# probe text map straight back onto the original.
+NUL, MONTHS = '\x00', ('Januar|Februar|M\xe4rz|April|Mai|Juni|Juli|August|'
+                       'September|Oktober|November|Dezember')
+probe = re.sub(r'\b\d{1,2}\.\d{1,2}\.(?:\d{2,4})?',
+               lambda m: m.group(0).replace('.', NUL), text)
 try:
     import pysbd
-    seg = pysbd.Segmenter(language='en', clean=False)
-    parts = seg.segment(text)
+    _cache = {}
+    def cuts(chunk, lang):
+        if lang not in _cache:
+            _cache[lang] = pysbd.Segmenter(language=lang, clean=False, char_span=True)
+        return [s.start for s in _cache[lang].segment(chunk)]
 except ImportError:
-    # Protect common abbreviations: replace their period with a placeholder
-    # so the sentence-boundary regex does not split on them.
-    _ABR = re.compile(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc)\. ')
-    _p = _ABR.sub(lambda m: m.group(1) + '\x00 ', text)
-    _p = re.sub(r'\b([A-Z])\. ', lambda m: m.group(1) + '\x00 ', _p)
-    parts = [p.replace('\x00', '.') for p in re.split(r'(?<=[.!?])\s+', _p)]
-pos = 0
-for p in parts:
-    p = p.strip()
-    if not p:
-        continue
-    idx = text.find(p, pos)
-    if idx == -1:
-        idx = pos
-    print(f'{idx}\t{len(p)}\t{p}')
-    pos = idx + len(p)
-" <<< "$1" 2>/dev/null || printf '0\t%d\t%s\n' "${#1}" "$1"
+    # Regex fallback: protect abbreviations, initials and ordinal dates so the
+    # boundary pattern does not fire inside them.  Matched on month names only
+    # -- a bare '\d+\. [A-Z]' rule would also swallow real English sentence
+    # ends ('We counted to 10. Then we stopped.').
+    ABBR = re.compile(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc)\. ')
+    def cuts(chunk, lang):
+        p = ABBR.sub(lambda m: m.group(1) + NUL + ' ', chunk)
+        p = re.sub(r'\b([A-Z])\. ', lambda m: m.group(1) + NUL + ' ', p)
+        p = re.sub(r'\b(\d{1,2})\. (?=(?:' + MONTHS + r')\b)',
+                   lambda m: m.group(1) + NUL + ' ', p)
+        return [0] + [m.end() for m in re.finditer(r'(?<=[.!?])\s+', p)]
+
+for (start, end), lang in zip(paras, para_langs):
+    marks = sorted({start} | {start + c for c in cuts(probe[start:end], lang)})
+    marks.append(end)
+    for i in range(len(marks) - 1):
+        raw = text[marks[i]:marks[i + 1]]
+        sentence = raw.strip()
+        if not sentence:
+            continue
+        idx = marks[i] + len(raw) - len(raw.lstrip())
+        flat = ' '.join(sentence.split())
+        print(f'{idx}\t{len(sentence)}\t{flat}')
+" "$_AUDIO_TOOL" <<< "$1" 2>/dev/null || printf '0\t%d\t%s\n' "${#1}" "$1"
 }
 
 # ── Local TTS helper ────────────────────────────────────────────

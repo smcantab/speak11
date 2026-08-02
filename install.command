@@ -263,21 +263,23 @@ fi
 
 # ── Ensure ftfy is available for text normalization ───────────────
 # ftfy fixes mojibake (encoding errors) in text copied from PDFs.
-# If the local-TTS venv exists, ftfy is already installed.  Otherwise
-# create a lightweight venv with just ftfy.
+# pysbd segments sentences for streaming playback; without it speak.sh
+# falls back to a regex splitter that mis-handles abbreviations and dates.
+# If the local-TTS venv exists, these are already installed.  Otherwise
+# create a lightweight venv with just them.
 _VENV_DIR="$HOME/.local/share/speak11/venv"
 if [ ! -d "$_VENV_DIR" ]; then
     if command -v python3 >/dev/null 2>&1; then
         spin "Setting up text normalization…"
         python3 -m venv "$_VENV_DIR" >> "$_LOG_FILE" 2>&1 && \
             "$_VENV_DIR/bin/pip" install --upgrade pip >> "$_LOG_FILE" 2>&1 && \
-            "$_VENV_DIR/bin/pip" install ftfy pylatexenc >> "$_LOG_FILE" 2>&1 && \
+            "$_VENV_DIR/bin/pip" install ftfy pylatexenc pysbd >> "$_LOG_FILE" 2>&1 && \
             step "Text normalization ready" || \
             printf '  \033[33m⚠\033[0m  Could not install text normalization (non-fatal)\n'
         unspin
     fi
-elif ! "$_VENV_DIR/bin/python3" -c "import ftfy; import pylatexenc" 2>/dev/null; then
-    "$_VENV_DIR/bin/pip" install ftfy pylatexenc >> "$_LOG_FILE" 2>&1 || true
+elif ! "$_VENV_DIR/bin/python3" -c "import ftfy; import pylatexenc; import pysbd" 2>/dev/null; then
+    "$_VENV_DIR/bin/pip" install ftfy pylatexenc pysbd >> "$_LOG_FILE" 2>&1 || true
     step "Text normalization updated"
 fi
 

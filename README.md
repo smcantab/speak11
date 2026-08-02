@@ -121,6 +121,7 @@ Double-click **`uninstall.command`** — it removes everything including the Acc
 | Symptom | Fix |
 |---------|-----|
 | `⌥⇧/` does nothing | Grant Accessibility permission when prompted, or check System Settings → Privacy & Security → Accessibility |
+| `⌥⇧/` types `¿` instead of speaking | Another app with a global keyboard tap (dictation tools such as Wispr Flow, macro utilities, some launchers) is intercepting the combo first. Pick a different shortcut via the menu bar icon → **Shortcut**, or quit the other app |
 | Waveform icon not in menu bar | Open `~/Applications/Speak11.app` manually, or re-run `install.command` |
 | HTTP 401 | API key is wrong or expired — run `install.command` again |
 | HTTP 429 | Monthly character quota exceeded — if both backends are installed, the app automatically falls back to local TTS. On Apple Silicon with ElevenLabs only, it will offer to install local TTS as a free alternative |
@@ -213,13 +214,21 @@ The hotkey activates automatically once access is granted.
 
 ### Electron apps (Beeper, Slack, VS Code, etc.)
 
-Electron apps intercept keyboard shortcuts before macOS Services sees them. The settings app solves this by registering `⌥⇧/` as a **global hotkey** via CoreGraphics — it works at the system level and cannot be blocked by any app.
+Electron apps intercept keyboard shortcuts before macOS Services sees them. The settings app solves this by registering `⌥⇧/` as a **global hotkey** via CoreGraphics — it works at the system level, so no ordinary app can block it.
 
 The settings app simulates `⌘C` via CGEvent to copy the current selection before calling the TTS script, so the hotkey works everywhere — including apps that don't support macOS Services.
 
+### Changing the shortcut
+
+Menu bar icon → **Shortcut** → press the combination you want. Either a function key (`F1`–`F20`) on its own, or any key with `⌘`, `⌥` or `⌃`. Shift alone is rejected, since the hotkey consumes what it matches and binding `⇧A` would eat every capital A you type.
+
+`Fn` is not a modifier here. macOS sets the function flag on every F-key event whether or not `Fn` is physically held, so `Fn+F18` and `F18` are indistinguishable — the binding matches the keycode, which means it works however your keyboard delivers the key. On Apple keyboards `F1`–`F12` send media keys by default, so prefer `F13`–`F20`, or enable *Use F1, F2, etc. as standard function keys* in System Settings → Keyboard.
+
+This matters when another app also installs a global keyboard tap — dictation tools such as Wispr Flow, macro utilities, some launchers. Whichever tap sits upstream sees the key first, and if it consumes and re-posts the event, Speak11 never sees it at all. macOS offers no way to claim priority, so the fix is to pick a combination the other app doesn't grab.
+
 ### Optional: Services shortcut
 
-The installer also creates a macOS Services action you can bind to any shortcut. This is optional — `⌥⇧/` already works everywhere — but useful if you prefer a different key combination.
+The installer also creates a macOS Services action you can bind to any shortcut. This is redundant now that the hotkey itself is rebindable, but it remains available.
 
 1. System Settings → **Keyboard → Keyboard Shortcuts → Services → Text**
 2. Find **Speak Selection** and assign a shortcut — e.g. `⌃⌥S`

@@ -1,5 +1,42 @@
 # Changelog
 
+## v1.3.0
+
+### Highlights
+
+**Rebindable shortcut.** The global hotkey is no longer fixed to `⌥⇧/`. Menu bar icon → **Shortcut** opens a key recorder: press any combination and it takes effect immediately, no restart. Either a function key (`F1`–`F20`) on its own, or any key with `⌘`, `⌥` or `⌃`. This matters when another app installs a global keyboard tap — dictation tools, macro utilities, some launchers — and grabs the combination first; macOS offers no way to claim priority, so being able to move the shortcut is the fix. The binding is stored as a keycode, so it follows the physical key across keyboard layouts.
+
+**Sentences no longer skipped.** The sentence splitter cut on punctuation with the English pySBD ruleset regardless of the text's actual language. German text was over-split, and lines without terminal punctuation — headings, salutations — were glued onto the following paragraph and could be dropped from playback entirely. Splitting is now paragraph-first (a blank line is a sentence break in every language, needing no segmenter), followed by per-paragraph language detection, then the pySBD ruleset for that language.
+
+### New features
+
+- **Configurable global shortcut**: key recorder in the menu bar, persisted to `~/.config/speak11/config` as `HOTKEY_CODE` / `HOTKEY_FLAGS`, applied to the live event tap without a restart. Bare keys and Shift-only combinations are rejected — the tap consumes what it matches, so binding `⇧A` would eat every capital A you type
+- **`speak11-audio detect-lang`**: batched language detection over `NaturalLanguage`, one process spawn for the whole document plus every paragraph, constrained to the languages the splitter has rulesets for
+
+### Bug fixes
+
+- **Lines silently skipped during playback**: paragraph-first splitting keeps a heading or salutation that lacks terminal punctuation from being absorbed into the next paragraph
+- **German text over-split**: each paragraph is segmented with the pySBD ruleset for its own detected language, falling back to the document language when a short fragment isn't confidently identified
+- **Numeric dates split mid-date**: `30.06.` and similar are protected before segmentation, so no pause lands inside a date
+- **`pysbd` now installed** by `install.command` alongside `ftfy` and `pylatexenc`; without it the splitter falls back to a regex that mishandles abbreviations and dates
+
+## v1.2.0
+
+### Highlights
+
+**Named custom voice library.** Add multiple custom ElevenLabs voices, each with its own name, straight from the menu bar — they now appear as regular entries in the **Voice** menu instead of a single overwritable slot. A new "Add Custom Voice…" dialog takes a name and a voice ID, and a "Remove Custom Voice" submenu manages them. Voices are stored in `~/.config/speak11/custom_voices.json`.
+
+**Non-ASCII text fixed.** Selections containing German (ß, ä, ö, ü), accents, or other non-ASCII characters are now spoken correctly. When launched from the menu bar, the app had no `LANG` set, so `pbpaste` fell back to ASCII and the characters were mangled and then stripped before reaching ElevenLabs. Speak11 now forces a UTF-8 character type for the clipboard read.
+
+### New features
+
+- **Multiple named custom voices**: add, select, and remove custom ElevenLabs voices from the **Voice** menu; persisted to `custom_voices.json`
+
+### Bug fixes
+
+- **Paste in dialogs**: `⌘V` (and `⌘C`/`⌘X`/`⌘A`) now work in the Add Custom Voice, Sentence Pause, and API Key dialogs. The menu bar app has no Edit menu, so a new `EditableTextField` routes the standard editing shortcuts through the responder chain — previously only right-click → Paste worked.
+- **German / non-ASCII selections dropped**: force a UTF-8 `LC_CTYPE` in `speak.sh`, and pass `LC_CTYPE=UTF-8` to the spawned process from the app, so `pbpaste` keeps non-ASCII text intact
+
 ## v1.1.0
 
 ### Highlights

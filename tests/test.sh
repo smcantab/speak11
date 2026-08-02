@@ -1943,6 +1943,18 @@ check "tts_server.py: cleans up speak11_tts_ temp dirs on startup" \
 
 section "Unicode sanitization"
 
+# pbpaste drops non-ASCII (ß, umlauts, accents) under the C/ASCII encoding that
+# GUI-launched apps get when no LANG is set. speak.sh forces a UTF-8 ctype, and
+# the app passes LC_CTYPE=UTF-8 to the child process.
+check "speak.sh: forces a UTF-8 LC_CTYPE for pbpaste" \
+    "yes" "$(grep -q 'LC_CTYPE="UTF-8"' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "speak.sh: UTF-8 ctype set before reading the clipboard" \
+    "yes" "$(awk '/LC_CTYPE="UTF-8"/{c=NR} /Read selected text/{r=NR} END{print (c && r && c<r) ? "yes" : "no"}' "$SPEAK_SH")"
+
+check "Speak11.swift: passes LC_CTYPE=UTF-8 to speak.sh" \
+    "yes" "$(grep -q '"LC_CTYPE": "UTF-8"' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
 check "speak.sh: sanitizes text with iconv before TTS" \
     "yes" "$(grep -q 'iconv -f UTF-8 -t UTF-8//IGNORE' "$SPEAK_SH" && echo "yes" || echo "no")"
 
@@ -1991,7 +2003,7 @@ check "speak.sh: split_sentences function exists" \
     "yes" "$(grep -q 'split_sentences()' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "speak.sh: split_sentences uses regex on sentence boundaries" \
-    "yes" "$(grep -q 're.split' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(grep -qF '(?<=[.!?])' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "speak.sh: run_elevenlabs_tts function exists" \
     "yes" "$(grep -q 'run_elevenlabs_tts()' "$SPEAK_SH" && echo "yes" || echo "no")"
@@ -2268,10 +2280,12 @@ except ImportError:
     _ABR = re.compile(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc)\. ')
     _p = _ABR.sub(lambda m: m.group(1) + '\x00 ', text)
     _p = re.sub(r'\b([A-Z])\. ', lambda m: m.group(1) + '\x00 ', _p)
+    _MON = 'Januar|Februar|M\xe4rz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember'
+    _p = re.sub(r'\b(\d{1,2})\. (?=(?:' + _MON + r')\b)', lambda m: m.group(1) + '\x00 ', _p)
     parts = [p.replace('\x00', '.') for p in re.split(r'(?<=[.!?])\s+', _p)]
 for p in parts:
     p = p.strip()
-    if p: print(p)
+    if p: print(' '.join(p.split()))
 " <<< "$1" 2>/dev/null || printf '%s\n' "$1"
 }
 
@@ -2402,6 +2416,8 @@ except ImportError:
     _ABR = re.compile(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc)\. ')
     _p = _ABR.sub(lambda m: m.group(1) + '\x00 ', text)
     _p = re.sub(r'\b([A-Z])\. ', lambda m: m.group(1) + '\x00 ', _p)
+    _MON = 'Januar|Februar|M\xe4rz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember'
+    _p = re.sub(r'\b(\d{1,2})\. (?=(?:' + _MON + r')\b)', lambda m: m.group(1) + '\x00 ', _p)
     parts = [p.replace('\x00', '.') for p in re.split(r'(?<=[.!?])\s+', _p)]
 pos = 0
 for p in parts:
@@ -2411,14 +2427,15 @@ for p in parts:
     idx = text.find(p, pos)
     if idx == -1:
         idx = pos
-    print(f'{idx}\t{len(p)}\t{p}')
+    flat = ' '.join(p.split())
+    print(f'{idx}\t{len(p)}\t{flat}')
     pos = idx + len(p)
 " <<< "$1" 2>/dev/null
 }
 
 # Verify speak.sh split_sentences uses offset format
 check "split_sentences outputs offset format" \
-    "yes" "$(grep -q "print(f'" "$SPEAK_SH" && grep -q 'idx.*len(p)' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(grep -q "print(f'" "$SPEAK_SH" && grep -q 'idx.*len(sentence)' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Two sentences: verify format and offset computation
 _OFF_RESULT=$(_test_split_offsets "Hello. World.")
@@ -2436,6 +2453,197 @@ check "offset: repeated sentences advance correctly" \
 _OFF_RESULT=$(_test_split_offsets "David Frum: Hello, and welcome to The David Frum Show. I'm David Frum, a staff writer at The Atlantic.")
 check "offset: David Frum second sentence at 55" \
     "55" "$(echo "$_OFF_RESULT" | sed -n '2p' | cut -f1)"
+
+# ── 46c. One record per line (multi-line sentences) ─────────────
+
+section "Sentence splitting: one record per line"
+
+# A sentence may span newlines (a heading or salutation with no terminal
+# punctuation sits directly above the paragraph that follows).  The playback
+# loops read one physical line per iteration and skip records whose sentence
+# field is empty, so a record printed across several lines silently loses
+# every line after the first.  Run the real function from speak.sh through
+# the real reader loop.
+#
+# _AUDIO_TOOL is pinned to a path that does not exist so these assertions do
+# not depend on whether speak11-audio has been compiled: detection is then
+# unavailable and every paragraph falls back to the German ruleset, which is
+# the documented degradation path.  detect-lang itself is covered in 46d.
+_real_split() (
+    VENV_PYTHON="${VENV_PYTHON:-$HOME/.local/share/speak11/venv/bin/python3}"
+    _AUDIO_TOOL="/nonexistent/speak11-audio"
+    eval "$(awk '/^split_sentences\(\)/,/^}$/' "$SPEAK_SH")"
+    split_sentences "$1"
+)
+
+# Count records the playback loops would drop ([ -z "$_SENTENCE" ] && continue)
+_count_dropped() {
+    local dropped=0
+    while IFS=$'\t' read -r _o _l _s; do
+        [ -z "$_s" ] && dropped=$((dropped + 1))
+    done <<< "$1"
+    echo "$dropped"
+}
+
+_MULTILINE="Heading With No Period
+Dear Mr. Smith,
+
+this paragraph follows a heading and must still be spoken. Next sentence here."
+
+_ML_RESULT=$(_real_split "$_MULTILINE")
+
+check "multiline: no record is dropped by the reader loop" \
+    "0" "$(_count_dropped "$_ML_RESULT")"
+
+check "multiline: every output line has 3 tab-separated fields" \
+    "yes" "$(echo "$_ML_RESULT" | awk -F'\t' 'NF!=3{bad=1} END{print bad?"no":"yes"}')"
+
+check "multiline: paragraph text survives the split" \
+    "1" "$(echo "$_ML_RESULT" | grep -c 'must still be spoken')"
+
+# Paragraph-first splitting: a blank line is a sentence boundary in any
+# language, so the heading must NOT be glued to the paragraph below it even
+# though the heading has no terminal punctuation.
+check "multiline: blank line separates heading from next paragraph" \
+    "0" "$(echo "$_ML_RESULT" | grep -c 'Heading With No Period.*this paragraph follows')"
+
+check "multiline: heading and salutation join across a single newline" \
+    "1" "$(echo "$_ML_RESULT" | grep -c 'Heading With No Period Dear Mr. Smith,')"
+
+# The strongest invariant: offset/len must index the ORIGINAL text exactly,
+# because Speak11.swift computes the respeak position from them
+# (charOffset + sentenceLen * ratio).  Slice the source at each record and
+# compare with the flattened field.
+_check_offsets() {
+    local py="${VENV_PYTHON:-$HOME/.local/share/speak11/venv/bin/python3}"
+    [ -x "$py" ] || py=python3
+    printf '%s' "$1" | "$py" -c '
+import sys
+text = sys.argv[1]
+bad = 0
+for line in sys.stdin.read().splitlines():
+    parts = line.split("\t", 2)
+    if len(parts) != 3:
+        bad += 1
+        continue
+    off, ln, sent = int(parts[0]), int(parts[1]), parts[2]
+    if " ".join(text[off:off + ln].split()) != sent:
+        bad += 1
+print("ok" if bad == 0 else "%d mismatched" % bad)
+' "$2" 2>/dev/null || echo "error"
+}
+
+check "multiline: offsets index the original text exactly" \
+    "ok" "$(_check_offsets "$_ML_RESULT" "$_MULTILINE")"
+
+# Ordinal dates: "30. Juni 2026" is one sentence, not two
+check "ordinal date: German date does not split" \
+    "2" "$(echo "$(_run_split "Der Vortrag war für den 30. Juni 2026 geplant. Er fiel aus.")" | wc -l | tr -d ' ')"
+
+check "ordinal date: umlaut month does not split" \
+    "1" "$(echo "$(_run_split "Der Termin ist am 3. März 2026 vorgesehen.")" | wc -l | tr -d ' ')"
+
+# A number that really does end a sentence still splits
+check "ordinal date: sentence-ending number still splits" \
+    "2" "$(echo "$(_run_split "We counted to 10. Then we stopped.")" | wc -l | tr -d ' ')"
+
+# Numeric dates are atomic — no segmenter keeps "30.06." intact on its own,
+# so speak.sh masks the inner periods before segmenting.  A cut here would
+# drop a 400ms pause into the middle of a date.
+check "numeric date: truncated date does not split" \
+    "1" "$(_real_split "Der Termin am 30.06. findet trotzdem statt." | wc -l | tr -d ' ')"
+
+check "numeric date: full date does not split" \
+    "1" "$(_real_split "Das Treffen war am 30.06.2020 in Bremen." | wc -l | tr -d ' ')"
+
+# ...but a date that really does end a sentence still splits
+check "numeric date: sentence-ending date still splits" \
+    "2" "$(_real_split "Das Treffen war am 30.06.2020. Danach kam nichts." | wc -l | tr -d ' ')"
+
+check "numeric date: masking leaves the text unchanged" \
+    "1" "$(_real_split "Das Treffen war am 30.06.2020 in Bremen." | grep -c '30\.06\.2020')"
+
+# Structural: speak.sh flattens records before printing
+check "speak.sh: split_sentences flattens records to one line" \
+    "yes" "$(awk '/^split_sentences\(\)/,/^}$/' "$SPEAK_SH" | grep -q "join(sentence.split())" && echo "yes" || echo "no")"
+
+# Structural: paragraphs are cut before any language or segmenter is involved
+check "speak.sh: split_sentences cuts paragraphs first" \
+    "yes" "$(awk '/^split_sentences\(\)/,/^}$/' "$SPEAK_SH" | grep -qF "finditer(r'\n[ \t]*\n'" && echo "yes" || echo "no")"
+
+# Structural: a low-confidence paragraph must not outvote the document
+check "speak.sh: paragraph language needs a confidence floor" \
+    "yes" "$(awk '/^split_sentences\(\)/,/^}$/' "$SPEAK_SH" | grep -q 'conf >= MIN_CONFIDENCE' && echo "yes" || echo "no")"
+
+# Structural: German is the fallback ruleset (it under-splits English mildly,
+# where the English ruleset over-splits German badly)
+check "speak.sh: falls back to the German ruleset" \
+    "yes" "$(awk '/^split_sentences\(\)/,/^}$/' "$SPEAK_SH" | grep -q "FALLBACK = 'de'" && echo "yes" || echo "no")"
+
+# ── 46d. Language detection (speak11-audio detect-lang) ─────────
+
+section "Language detection"
+
+_AUDIO_SWIFT="$SCRIPT_DIR/speak11-audio.swift"
+
+check "speak11-audio.swift: detect-lang subcommand exists" \
+    "yes" "$(grep -q 'case "detect-lang"' "$_AUDIO_SWIFT" && echo "yes" || echo "no")"
+
+check "speak11-audio.swift: constrains detection to en/de" \
+    "yes" "$(grep -q 'languageConstraints = detectLanguages' "$_AUDIO_SWIFT" && echo "yes" || echo "no")"
+
+check "speak11-audio.swift: emits confidence alongside language" \
+    "yes" "$(grep -q 'languageHypotheses' "$_AUDIO_SWIFT" && echo "yes" || echo "no")"
+
+check "install.command: cloud-only venv installs pysbd" \
+    "2" "$(grep -c 'ftfy pylatexenc pysbd' "$SCRIPT_DIR/install.command" || true)"
+
+# Functional: compile detect-lang and run it (slow — skipped in --fast)
+if $FAST; then
+    printf "  SKIP  detect-lang functional tests (--fast mode)\n"
+elif ! xcrun swiftc --version >/dev/null 2>&1; then
+    printf "  SKIP  detect-lang functional tests (swiftc unavailable)\n"
+else
+    _DL_BIN="$(mktemp -d)/speak11-audio"
+    if xcrun swiftc "$_AUDIO_SWIFT" -o "$_DL_BIN" -O 2>/dev/null; then
+        # NUL-separated records in, one "lang<TAB>confidence" line per record out
+        _dl() { printf '%s' "$1" | "$_DL_BIN" detect-lang | cut -f1; }
+
+        check "detect-lang: German prose" \
+            "de" "$(_dl "Sehr geehrter Herr Meyer, anbei finden Sie den Bericht.")"
+
+        check "detect-lang: English prose" \
+            "en" "$(_dl "The deployment failed because the health check timed out.")"
+
+        # Capitalization must not matter — this is what rules out a
+        # "lowercase word cannot start a sentence" heuristic
+        check "detect-lang: all-lowercase German" \
+            "de" "$(_dl "das war komisch. ich habe nichts gemacht. keine ahnung warum")"
+
+        check "detect-lang: German without umlauts" \
+            "de" "$(_dl "Bitte pruefen Sie das Angebot und geben Sie mir Bescheid.")"
+
+        # Undetectable input reports "und" so the caller falls back
+        check "detect-lang: digits are undetectable" \
+            "und" "$(_dl "30.06.2020")"
+
+        check "detect-lang: empty record is undetectable" \
+            "und" "$(_dl "")"
+
+        # Batching: N records in, N lines out, one process
+        check "detect-lang: batches NUL-separated records" \
+            "de|en|de" "$(printf 'Guten Tag zusammen\x00Good morning everyone\x00Vielen Dank dafuer' \
+                | "$_DL_BIN" detect-lang | cut -f1 | tr '\n' '|' | sed 's/|$//')"
+
+        check "detect-lang: reports a confidence per record" \
+            "yes" "$(printf 'Sehr geehrter Herr Meyer' | "$_DL_BIN" detect-lang \
+                | awk -F'\t' '{print ($2 > 0.5) ? "yes" : "no"}')"
+
+        rm -rf "$(dirname "$_DL_BIN")"
+    else
+        printf "  SKIP  detect-lang functional tests (compile failed)\n"
+    fi
+fi
 
 # ── 47. Temp file lifecycle ──────────────────────────────────────
 
@@ -4229,15 +4437,53 @@ check "Speak11.swift: passes SPEAK11_MUTE_CHECKED to speak.sh" \
 check "speak.sh: skips mute check when SPEAK11_MUTE_CHECKED=1" \
     "yes" "$(grep -q 'SPEAK11_MUTE_CHECKED' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-# Cmd+V paste support: dialogs with text fields must use .regular activation policy
-check "Speak11.swift: API key dialog enables paste (regular activation)" \
-    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'setActivationPolicy(.regular)' && echo "yes" || echo "no")"
+# Cmd+V paste support: the app has no Edit menu (accessory app), so dialog text
+# fields use EditableTextField, which routes ⌘X/⌘C/⌘V/⌘A through the responder chain.
+check "Speak11.swift: EditableTextField subclass exists" \
+    "yes" "$(grep -q 'class EditableTextField: NSTextField' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
 
-check "Speak11.swift: custom voice dialog enables paste (regular activation)" \
-    "yes" "$(awk '/func customVoice/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'setActivationPolicy(.regular)' && echo "yes" || echo "no")"
+check "Speak11.swift: EditableTextField overrides performKeyEquivalent" \
+    "yes" "$(awk '/class EditableTextField/,/^}/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'performKeyEquivalent' && echo "yes" || echo "no")"
+
+check "Speak11.swift: EditableTextField handles paste" \
+    "yes" "$(awk '/class EditableTextField/,/^}/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'NSText.paste' && echo "yes" || echo "no")"
+
+check "Speak11.swift: API key dialog uses EditableTextField for paste" \
+    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'EditableTextField' && echo "yes" || echo "no")"
+
+check "Speak11.swift: sentence pause dialog uses EditableTextField for paste" \
+    "yes" "$(awk '/func editSentencePause/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'EditableTextField' && echo "yes" || echo "no")"
+
+check "Speak11.swift: add custom voice dialog uses EditableTextField for paste" \
+    "yes" "$(awk '/func addCustomVoice/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'EditableTextField' && echo "yes" || echo "no")"
 
 check "Speak11.swift: dialogs restore accessory policy via defer" \
     "yes" "$(grep -c 'defer.*setActivationPolicy(.accessory)' "$SCRIPT_DIR/Speak11.swift" | awk '{print ($1 >= 2) ? "yes" : "no"}')"
+
+# Multiple named custom voices
+check "Speak11.swift: CustomVoice model exists" \
+    "yes" "$(grep -q 'struct CustomVoice' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "Speak11.swift: Config stores customVoices" \
+    "yes" "$(grep -q 'var customVoices' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "Speak11.swift: persists custom voices to JSON" \
+    "yes" "$(grep -q 'custom_voices.json' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "Speak11.swift: addCustomVoice function exists" \
+    "yes" "$(grep -q 'func addCustomVoice' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "Speak11.swift: removeCustomVoice function exists" \
+    "yes" "$(grep -q 'func removeCustomVoice' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+
+check "Speak11.swift: custom voices appear in the Voice menu" \
+    "yes" "$(awk '/func buildVoiceItems/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'customVoices' && echo "yes" || echo "no")"
+
+check "Speak11.swift: custom voices reuse pickVoice selector" \
+    "yes" "$(awk '/func buildVoiceItems/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'pickVoice' && echo "yes" || echo "no")"
+
+check "Speak11.swift: addCustomVoice calls scheduleRespeak" \
+    "yes" "$(awk '/func addCustomVoice/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'scheduleRespeak' && echo "yes" || echo "no")"
 
 # API key validation
 check "Speak11.swift: validateAPIKey function exists" \
@@ -4417,7 +4663,7 @@ check "Speak11.swift: Sentence Pause menu item shows current value" \
     "yes" "$(grep -q 'Sentence Pause.*sentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
 check "Speak11.swift: Sentence Pause uses text input dialog" \
-    "yes" "$(awk '/func editSentencePause/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'NSTextField' && echo "yes" || echo "no")"
+    "yes" "$(awk '/func editSentencePause/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'EditableTextField' && echo "yes" || echo "no")"
 
 # speak11-audio.swift: pause_ms field in protocol
 check "speak11-audio.swift: maxSplits is 5 (6 fields)" \
@@ -4500,6 +4746,17 @@ if type normalize_text &>/dev/null; then
 
     check "normalize: forests joins (inflected form)" \
         "forests" "$(normalize_text $'for-\nests')"
+
+    # Non-ASCII preservation: ElevenLabs supports many languages, so the
+    # normalizer must never strip German (ß, umlauts) or other accented text.
+    check "normalize: preserves German eszett and umlauts" \
+        "Das Maß für Größe und Spaß." "$(normalize_text 'Das Maß für Größe und Spaß.')"
+
+    check "normalize: preserves uppercase umlauts" \
+        "Über Öl und Äpfel." "$(normalize_text 'Über Öl und Äpfel.')"
+
+    check "normalize: preserves accented Latin text" \
+        "café résumé naïve Zürich" "$(normalize_text 'café résumé naïve Zürich')"
 
     # Line break rejoining
     check "normalize: rejoin mid-sentence line break" \
@@ -5656,6 +5913,10 @@ if type normalize_text &>/dev/null; then
         "where alpha equals 5" \
         "$(normalize_text 'where $\alpha = 5$')"
 
+    check "latex: preserves German text around math" \
+        "Die Größe ist alpha equals 5 für Müller." \
+        "$(normalize_text 'Die Größe ist $\alpha = 5$ für Müller.')"
+
     check "latex: plain text not detected as LaTeX" \
         "The quick brown fox jumped." \
         "$(normalize_text 'The quick brown fox jumped.')"
@@ -6058,6 +6319,11 @@ Hello.')"
         "Title: Introduction. This is important." \
         "$(normalize_text '# Introduction
 This is **important**.')"
+
+    check "markdown: preserves German heading + bold" \
+        "Title: Größe. Das Maß für Spaß und Müller." \
+        "$(normalize_text '# Größe
+Das Maß für **Spaß** und Müller.')"
 
     check "markdown: plain text not detected as Markdown" \
         "Just a normal sentence." \
@@ -6618,6 +6884,116 @@ AT\&T costs \$5.')"
 
 else
     check "backend: normalize_text function not found" "yes" "no"
+fi
+
+# ── Configurable hotkey ──────────────────────────────────────────
+
+section "Configurable hotkey"
+
+# The tap callback must consult the configured hotkey, not a fixed constant —
+# otherwise rebinding from the menu silently does nothing.
+check "hotkey: callback matches configured code, not a constant" \
+    "yes" "$(awk '/^private let hotkeyCallback/,/^\}$/' "$SETTINGS_SWIFT" \
+        | grep -q 'code == gHotkey.code, flags == gHotkey.flags' && echo "yes" || echo "no")"
+check "hotkey: no hardcoded keycode constant remains" \
+    "no" "$(grep -q 'kHotkeyCode' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# Persistence: both halves must round-trip, or a rebind is lost on restart.
+check "hotkey: HOTKEY_CODE in config save" \
+    "yes" "$(grep -q 'HOTKEY_CODE=' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+check "hotkey: HOTKEY_FLAGS in config save" \
+    "yes" "$(grep -q 'HOTKEY_FLAGS=' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+check "hotkey: HOTKEY_CODE parsed on load" \
+    "yes" "$(grep -q 'case "HOTKEY_CODE"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+check "hotkey: HOTKEY_FLAGS parsed on load" \
+    "yes" "$(grep -q 'case "HOTKEY_FLAGS"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+# A hand-edited config naming no modifiers would bind a bare key and eat typing.
+check "hotkey: invalid config falls back to default" \
+    "yes" "$(awk '/static func load\(\)/,/^    \}$/' "$SETTINGS_SWIFT" \
+        | grep -q 'hotkey.isValid' && echo "yes" || echo "no")"
+
+# Recording must suspend the tap, or pressing the current shortcut to rebind it
+# gets consumed and starts speaking instead of registering.
+check "hotkey: editHotkey disables tap while recording" \
+    "yes" "$(awk '/func editHotkey/,/^    \}$/' "$SETTINGS_SWIFT" \
+        | grep -q 'tapEnable(tap: tap, enable: false)' && echo "yes" || echo "no")"
+check "hotkey: editHotkey re-enables tap afterwards" \
+    "yes" "$(awk '/func editHotkey/,/^    \}$/' "$SETTINGS_SWIFT" \
+        | grep -q 'defer.*tapEnable(tap: tap, enable: true)' && echo "yes" || echo "no")"
+check "hotkey: editHotkey updates the live tap state" \
+    "yes" "$(awk '/func editHotkey/,/^    \}$/' "$SETTINGS_SWIFT" \
+        | grep -q 'gHotkey = picked' && echo "yes" || echo "no")"
+check "hotkey: launch syncs tap state from config" \
+    "yes" "$(awk '/func applicationDidFinishLaunching/,/^    \}$/' "$SETTINGS_SWIFT" \
+        | grep -q 'gHotkey = config.hotkey' && echo "yes" || echo "no")"
+
+# Behavioural: compile the real Hotkey struct out of the app and exercise it.
+# Greps above prove the wiring; this proves the logic.
+if $FAST; then
+    printf "        SKIP  behavioural hotkey test (--fast mode)\n"
+elif ! xcrun swiftc --version &>/dev/null; then
+    printf "        SKIP  behavioural hotkey test (swiftc not found)\n"
+else
+    _hkdir=$(mktemp -d)
+    {
+        printf 'import Cocoa\nimport Carbon.HIToolbox\n\n'
+        awk '/^struct Hotkey: Equatable \{/,/^\}$/' "$SETTINGS_SWIFT"
+        cat <<'SWIFT'
+let d = Hotkey.default
+print("display=\(d.display)")
+print("code=\(d.code)")
+print("flags=\(d.serializedFlags)")
+print("roundtrip=\(Hotkey.parseFlags(d.serializedFlags) == d.flags)")
+print("validDefault=\(d.isValid)")
+print("validShiftOnly=\(Hotkey(code: 44, flags: [.maskShift]).isValid)")
+print("validNoMods=\(Hotkey(code: 44, flags: []).isValid)")
+print("space=\(Hotkey(code: 49, flags: [.maskCommand, .maskControl]).display)")
+print("f18=\(Hotkey(code: 0x4F, flags: []).display)")
+print("f13=\(Hotkey(code: 0x69, flags: []).display)")
+print("f20=\(Hotkey(code: 0x5A, flags: []).display)")
+print("validBareF18=\(Hotkey(code: 0x4F, flags: []).isValid)")
+print("validBareF1=\(Hotkey(code: 0x7A, flags: []).isValid)")
+print("validShiftF18=\(Hotkey(code: 0x4F, flags: [.maskShift]).isValid)")
+print("fkeyCount=\(Hotkey.functionKeys.count)")
+print("fkeysAllNamed=\(Hotkey.functionKeys.allSatisfy { Hotkey.keyLabel(for: $0).hasPrefix("F") })")
+SWIFT
+    } > "$_hkdir/hk.swift"
+
+    if xcrun swiftc "$_hkdir/hk.swift" -o "$_hkdir/hk" 2>"$_hkdir/err"; then
+        _hk=$("$_hkdir/hk")
+        _hkget() { printf '%s\n' "$_hk" | grep "^$1=" | cut -d= -f2-; }
+
+        # Default must still be ⌥⇧/ — rebinding is opt-in, not a behaviour change.
+        check "hotkey: default renders as ⌥⇧/"      "⌥⇧/"      "$(_hkget display)"
+        check "hotkey: default keycode is 44"        "44"        "$(_hkget code)"
+        check "hotkey: default flags serialize"      "alt,shift" "$(_hkget flags)"
+        check "hotkey: flags survive save/load"      "true"      "$(_hkget roundtrip)"
+        # Shift alone would swallow every capital letter the user types.
+        check "hotkey: default is valid"             "true"      "$(_hkget validDefault)"
+        check "hotkey: shift-only rejected"          "false"     "$(_hkget validShiftOnly)"
+        check "hotkey: modifier-less rejected"       "false"     "$(_hkget validNoMods)"
+        # Non-printing keys need names; modifiers render in macOS order ⌃⌥⇧⌘.
+        check "hotkey: names non-printing keys"      "⌃⌘Space"   "$(_hkget space)"
+
+        # Function keys bind bare — they emit no character, so consuming one
+        # cannot swallow typing. Fn is never required: macOS sets the function
+        # flag on every F-key event regardless, so it can't be matched on.
+        check "hotkey: F18 accepted without modifiers"  "true"  "$(_hkget validBareF18)"
+        check "hotkey: F1 accepted without modifiers"   "true"  "$(_hkget validBareF1)"
+        check "hotkey: shift+F18 still accepted"        "true"  "$(_hkget validShiftF18)"
+        check "hotkey: F18 renders as F18"              "F18"   "$(_hkget f18)"
+        check "hotkey: F13 renders as F13"              "F13"   "$(_hkget f13)"
+        check "hotkey: F20 renders as F20"              "F20"   "$(_hkget f20)"
+        # F1–F20 must be complete, and every one must have a label — an F-key
+        # missing from specialKeys would render as "#79" in the menu.
+        check "hotkey: F1–F20 all present"              "20"    "$(_hkget fkeyCount)"
+        check "hotkey: every function key has a label"  "true"  "$(_hkget fkeysAllNamed)"
+    else
+        check "hotkey: behavioural test compiles" "yes" "no ($(head -1 "$_hkdir/err"))"
+    fi
+    rm -f "$_hkdir"/hk.swift "$_hkdir"/hk "$_hkdir"/err
+    rmdir "$_hkdir" 2>/dev/null || true
 fi
 
 # ── Summary ──────────────────────────────────────────────────────

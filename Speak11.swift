@@ -1,14 +1,228 @@
 import Cocoa
 import ApplicationServices
+import Carbon.HIToolbox
 import CoreAudio
+
+// MARK: - Editable text field
+//
+// This app runs as an accessory (LSUIElement) with no main menu, so there is
+// no Edit menu to provide the standard ⌘X/⌘C/⌘V/⌘A key equivalents. Without
+// them, text fields in our NSAlert dialogs only support paste via right-click.
+// Routing the editing actions to the field editor through the responder chain
+// restores the expected keyboard shortcuts regardless of activation policy.
+final class EditableTextField: NSTextField {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
+            switch event.charactersIgnoringModifiers {
+            case "x": if NSApp.sendAction(#selector(NSText.cut(_:)),    to: nil, from: self) { return true }
+            case "c": if NSApp.sendAction(#selector(NSText.copy(_:)),   to: nil, from: self) { return true }
+            case "v": if NSApp.sendAction(#selector(NSText.paste(_:)),  to: nil, from: self) { return true }
+            case "a": if NSApp.sendAction(#selector(NSResponder.selectAll(_:)), to: nil, from: self) { return true }
+            case "z": if NSApp.sendAction(Selector(("undo:")),          to: nil, from: self) { return true }
+            default: break
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
 
 // MARK: - Config paths
 
 private let configDir  = (NSHomeDirectory() as NSString).appendingPathComponent(".config/speak11")
 private let configPath = (configDir as NSString).appendingPathComponent("config")
 private let speakPath  = (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/speak.sh")
+// User-defined ElevenLabs voices live in their own JSON file (not the
+// bash-sourced `config`) so arbitrary names never need shell escaping.
+private let customVoicesPath = (configDir as NSString).appendingPathComponent("custom_voices.json")
 
 // MARK: - Config model
+
+/// A user-added ElevenLabs voice (a display name + voice ID).
+struct CustomVoice: Codable {
+    var name: String
+    var id: String
+}
+
+// MARK: - Hotkey model
+
+/// The global shortcut that triggers speaking, as a raw keycode plus the
+/// modifier mask it must be pressed with.
+///
+/// Stored in the config file as a keycode and a comma-separated modifier list
+/// (`HOTKEY_CODE="44"`, `HOTKEY_FLAGS="alt,shift"`) rather than a rendered
+/// string like "⌥⇧/", because the character a keycode produces depends on the
+/// active keyboard layout — the keycode is the layout-independent identity.
+struct Hotkey: Equatable {
+    var code:  Int64
+    var flags: CGEventFlags
+
+    /// Keycode 44 = forward slash on ANSI/ISO keyboards (US and most layouts).
+    static let `default` = Hotkey(code: 44, flags: [.maskAlternate, .maskShift])
+
+    /// The modifiers we recognise, in the order macOS displays them: ⌃⌥⇧⌘.
+    static let modifiers: [(mask: CGEventFlags, name: String, symbol: String)] = [
+        (.maskControl,   "ctrl",  "\u{2303}"),
+        (.maskAlternate, "alt",   "\u{2325}"),
+        (.maskShift,     "shift", "\u{21E7}"),
+        (.maskCommand,   "cmd",   "\u{2318}"),
+    ]
+
+    /// F1–F20. Bindable on their own: they produce no character, so consuming
+    /// one can't eat ordinary typing.
+    static let functionKeys: Set<Int64> = [
+        0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F,  // F1–F12
+        0x69, 0x6B, 0x71, 0x6A, 0x40, 0x4F, 0x50, 0x5A,                          // F13–F20
+    ]
+
+    /// A shortcut must carry at least one of ⌃⌥⌘, or be a function key.
+    /// Shift alone is rejected because the tap consumes what it matches, so
+    /// binding "⇧a" would eat every capital A the user types.
+    ///
+    /// Fn is deliberately not a modifier here: macOS sets the function flag on
+    /// every F-key event whether or not Fn is physically held, so "Fn+F18" and
+    /// "F18" are indistinguishable. Matching on the keycode alone means the
+    /// binding works however the keyboard chooses to deliver the key.
+    var isValid: Bool {
+        Hotkey.functionKeys.contains(code)
+            || !flags.intersection([.maskControl, .maskAlternate, .maskCommand]).isEmpty
+    }
+
+    /// e.g. "⌥⇧/" — for the menu and the Accessibility prompt.
+    var display: String {
+        Hotkey.modifiers.filter { flags.contains($0.mask) }.map { $0.symbol }.joined()
+            + Hotkey.keyLabel(for: code)
+    }
+
+    /// e.g. "alt,shift" — for the config file.
+    var serializedFlags: String {
+        Hotkey.modifiers.filter { flags.contains($0.mask) }.map { $0.name }.joined(separator: ",")
+    }
+
+    static func parseFlags(_ raw: String) -> CGEventFlags {
+        var result = CGEventFlags()
+        for token in raw.lowercased().split(separator: ",") {
+            let name = token.trimmingCharacters(in: .whitespaces)
+            if let m = modifiers.first(where: { $0.name == name }) { result.insert(m.mask) }
+        }
+        return result
+    }
+
+    // Keys that produce no printable character, so UCKeyTranslate can't name them.
+    private static let specialKeys: [Int64: String] = [
+        0x24: "\u{21A9}",  0x30: "\u{21E5}",  0x31: "Space",   0x33: "\u{232B}",
+        0x35: "\u{238B}",  0x75: "\u{2326}",  0x73: "\u{2196}", 0x77: "\u{2198}",
+        0x74: "\u{21DE}",  0x79: "\u{21DF}",  0x7B: "\u{2190}", 0x7C: "\u{2192}",
+        0x7D: "\u{2193}",  0x7E: "\u{2191}",
+        0x7A: "F1",  0x78: "F2",  0x63: "F3",  0x76: "F4",  0x60: "F5",  0x61: "F6",
+        0x62: "F7",  0x64: "F8",  0x65: "F9",  0x6D: "F10", 0x67: "F11", 0x6F: "F12",
+        0x69: "F13", 0x6B: "F14", 0x71: "F15", 0x6A: "F16", 0x40: "F17", 0x4F: "F18",
+        0x50: "F19", 0x5A: "F20",
+    ]
+
+    /// Renders a keycode using the *current* keyboard layout, so a German
+    /// layout shows the character its user actually presses.
+    static func keyLabel(for code: Int64) -> String {
+        if let special = specialKeys[code] { return special }
+
+        guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let raw = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
+        else { return "#\(code)" }
+
+        let layoutData = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue() as Data
+        var deadKeyState: UInt32 = 0
+        var chars = [UniChar](repeating: 0, count: 4)
+        var length = 0
+
+        let status = layoutData.withUnsafeBytes { buf -> OSStatus in
+            guard let layout = buf.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self)
+            else { return OSStatus(paramErr) }
+            return UCKeyTranslate(
+                layout,
+                UInt16(code),
+                UInt16(kUCKeyActionDisplay),
+                0,                                   // no modifiers — we want the base character
+                UInt32(LMGetKbdType()),
+                OptionBits(kUCKeyTranslateNoDeadKeysBit),
+                &deadKeyState,
+                chars.count,
+                &length,
+                &chars)
+        }
+        guard status == noErr, length > 0 else { return "#\(code)" }
+        return String(utf16CodeUnits: chars, count: length).uppercased()
+    }
+}
+
+// MARK: - Hotkey recorder
+//
+// A view that captures one key combination. Combos carrying ⌘/⌥/⌃ are grabbed
+// in performKeyEquivalent, which runs *before* the alert's buttons get a look
+// at them — otherwise ⌘Q would quit the app mid-recording. Plain Return and
+// Escape deliberately fall through so they still work the buttons.
+final class HotkeyRecorderView: NSView {
+    private(set) var hotkey: Hotkey
+    private let label = NSTextField(labelWithString: "")
+
+    init(initial: Hotkey) {
+        hotkey = initial
+        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 56))
+        label.frame = bounds
+        label.alignment = .center
+        label.font = .systemFont(ofSize: 22, weight: .medium)
+        label.stringValue = initial.display
+        addSubview(label)
+        wantsLayer = true
+        layer?.borderWidth = 1
+        layer?.cornerRadius = 6
+        layer?.borderColor = NSColor.separatorColor.cgColor
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Grab ⌘/⌥/⌃ combos here, ahead of the alert's buttons, so ⌘Q doesn't
+        // quit the app mid-recording. Everything else falls through, which is
+        // what keeps plain Return working Save and Escape working Cancel.
+        let flags = cgFlags(from: event)
+        guard !flags.intersection([.maskControl, .maskAlternate, .maskCommand]).isEmpty
+        else { return super.performKeyEquivalent(with: event) }
+        capture(Hotkey(code: Int64(event.keyCode), flags: flags))
+        return true
+    }
+
+    override func keyDown(with event: NSEvent) {
+        // Modifier-less keys land here — acceptable only if a function key.
+        let candidate = Hotkey(code: Int64(event.keyCode), flags: cgFlags(from: event))
+        guard candidate.isValid else { NSSound.beep(); return }
+        capture(candidate)
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        // Live preview: show modifiers as they are held, before the key lands.
+        let flags = cgFlags(from: event)
+        label.stringValue = flags.isEmpty
+            ? hotkey.display
+            : Hotkey.modifiers.filter { flags.contains($0.mask) }.map { $0.symbol }.joined()
+    }
+
+    private func capture(_ candidate: Hotkey) {
+        hotkey = candidate
+        label.stringValue = candidate.display
+    }
+
+    private func cgFlags(from event: NSEvent) -> CGEventFlags {
+        let ns = event.modifierFlags
+        var flags = CGEventFlags()
+        if ns.contains(.control) { flags.insert(.maskControl)   }
+        if ns.contains(.option)  { flags.insert(.maskAlternate) }
+        if ns.contains(.shift)   { flags.insert(.maskShift)     }
+        if ns.contains(.command) { flags.insert(.maskCommand)   }
+        return flags
+    }
+}
 
 struct Config {
     // Backend selection
@@ -17,6 +231,7 @@ struct Config {
 
     // ElevenLabs settings
     var voiceId:         String = "pFZP5JQG7iQjIQuC4Bku"
+    var customVoices:    [CustomVoice] = []
     var modelId:         String = "eleven_flash_v2_5"
     var stability:       Double = 0.5
     var similarityBoost: Double = 0.75
@@ -32,6 +247,9 @@ struct Config {
 
     // Inter-sentence pause (milliseconds at 1.0x speed, scales with speed)
     var sentencePause:   Int    = 400
+
+    // Global shortcut that triggers speaking
+    var hotkey:          Hotkey = .default
 
     static func load() -> Config {
         var c = Config()
@@ -62,8 +280,19 @@ struct Config {
             case "LOCAL_VOICE":          c.localVoice         = value
             case "LOCAL_SPEED":          c.localSpeed         = Double(value) ?? c.localSpeed
             case "SENTENCE_PAUSE":       c.sentencePause      = Int(value) ?? c.sentencePause
+            case "HOTKEY_CODE":          c.hotkey.code        = Int64(value) ?? c.hotkey.code
+            case "HOTKEY_FLAGS":         c.hotkey.flags       = Hotkey.parseFlags(value)
             default: break
             }
+        }
+        // A hand-edited config could name no modifiers at all, which would bind
+        // a bare key and swallow ordinary typing. Fall back rather than obey.
+        if !c.hotkey.isValid { c.hotkey = .default }
+
+        // Custom voices live in a separate JSON file.
+        if let data = FileManager.default.contents(atPath: customVoicesPath),
+           let voices = try? JSONDecoder().decode([CustomVoice].self, from: data) {
+            c.customVoices = voices
         }
         return c
     }
@@ -84,9 +313,16 @@ struct Config {
             "LOCAL_VOICE=\"\(localVoice)\"",
             "LOCAL_SPEED=\"\(String(format: "%.2f", localSpeed))\"",
             "SENTENCE_PAUSE=\"\(sentencePause)\"",
+            "HOTKEY_CODE=\"\(hotkey.code)\"",
+            "HOTKEY_FLAGS=\"\(hotkey.serializedFlags)\"",
         ]
         try? (lines.joined(separator: "\n") + "\n")
             .write(toFile: configPath, atomically: true, encoding: .utf8)
+
+        // Persist custom voices to their own JSON file.
+        if let data = try? JSONEncoder().encode(customVoices) {
+            try? data.write(to: URL(fileURLWithPath: customVoicesPath), options: .atomic)
+        }
     }
 }
 
@@ -195,12 +431,15 @@ func unmuteOutput() {
     AudioObjectSetPropertyData(deviceID, &address, 0, nil, size, &muted)
 }
 
-// MARK: - Global hotkey ⌥⇧/ → speak.sh
+// MARK: - Global hotkey → speak.sh
 //
-// Keycode 44 = forward slash on ANSI/ISO keyboards (US and most layouts).
-// Option+Shift must be set — no Control or Command.
-
-private let kHotkeyCode: Int64 = 44
+// Defaults to ⌥⇧/ (keycode 44 = forward slash on ANSI/ISO keyboards) but the
+// user can rebind it from the menu — mainly to dodge other apps that install
+// their own keyboard taps and would otherwise swallow the combo first.
+//
+// Read and written only on the main thread: the tap's run loop source is
+// attached to the main run loop, so the callback runs there too.
+private var gHotkey = Hotkey.default
 
 // Module-level tap reference so the C callback can re-enable it after a timeout.
 private var globalTap: CFMachPort?
@@ -219,7 +458,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     let code  = event.getIntegerValueField(.keyboardEventKeycode)
     let flags = event.flags.intersection([.maskAlternate, .maskShift, .maskControl, .maskCommand])
 
-    guard code == kHotkeyCode, flags == [.maskAlternate, .maskShift] else {
+    guard code == gHotkey.code, flags == gHotkey.flags else {
         return Unmanaged.passRetained(event)
     }
 
@@ -257,6 +496,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         statusItem.button?.image = NSImage(
             systemSymbolName: "waveform", accessibilityDescription: "Speak11")
         appDelegateRef = self
+        gHotkey = config.hotkey
         installHotkey()
         rebuildMenu()
         if !AXIsProcessTrusted() {
@@ -424,8 +664,11 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/bin/bash")
             task.arguments    = [speakPath]
+            // Force a UTF-8 character type so speak.sh's pbpaste keeps non-ASCII
+            // text (ß, umlauts, accents, CJK). GUI-launched apps often have no
+            // LANG, which would make pbpaste fall back to ASCII and drop them.
             task.environment  = ProcessInfo.processInfo.environment.merging(
-                ["SPEAK11_MUTE_CHECKED": "1"]) { _, new in new }
+                ["SPEAK11_MUTE_CHECKED": "1", "LC_CTYPE": "UTF-8"]) { _, new in new }
 
             if let text = text {
                 let pipe = Pipe()
@@ -744,6 +987,13 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             keyEquivalent: "")
         pauseItem.target = self
         menu.addItem(pauseItem)
+
+        let shortcutItem = NSMenuItem(
+            title:  "Shortcut: \(config.hotkey.display)",
+            action: #selector(editHotkey),
+            keyEquivalent: "")
+        shortcutItem.target = self
+        menu.addItem(shortcutItem)
         menu.addItem(.separator())
 
         // API Key + Credits — when ElevenLabs is active
@@ -767,7 +1017,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
 
         if !AXIsProcessTrusted() {
             let warn = NSMenuItem(
-                title:          "⚠️  Enable Accessibility for ⌥⇧/",
+                title:          "⚠️  Enable Accessibility for \(config.hotkey.display)",
                 action:         #selector(requestAccessibility),
                 keyEquivalent:  "")
             warn.target = self
@@ -796,14 +1046,41 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     }
 
     private func buildVoiceItems() -> [NSMenuItem] {
-        let isCustom = !knownVoices.contains { $0.id == config.voiceId }
         var items = knownVoices.map { v in
             item(v.name, #selector(pickVoice(_:)), repr: v.id, on: v.id == config.voiceId)
         }
+
+        // User-added custom voices — selectable like presets (reuse pickVoice).
+        if !config.customVoices.isEmpty {
+            items.append(.separator())
+            for v in config.customVoices {
+                items.append(item(v.name, #selector(pickVoice(_:)),
+                                  repr: v.id, on: v.id == config.voiceId))
+            }
+        }
+
+        // An active voice that is neither a preset nor a saved custom voice
+        // (e.g. set via the ELEVENLABS_VOICE_ID env var or an older config).
+        let isKnown = knownVoices.contains       { $0.id == config.voiceId }
+        let isSaved = config.customVoices.contains { $0.id == config.voiceId }
+        if !isKnown && !isSaved {
+            items.append(.separator())
+            items.append(item("Custom: \(config.voiceId)", #selector(pickVoice(_:)),
+                              repr: config.voiceId, on: true))
+        }
+
         items.append(.separator())
-        let customLabel = isCustom ? "Custom: \(config.voiceId)" : "Custom voice ID…"
-        items.append(item(customLabel, #selector(customVoice), repr: "", on: isCustom))
+        items.append(item("Add Custom Voice\u{2026}", #selector(addCustomVoice), repr: "", on: false))
+        if !config.customVoices.isEmpty {
+            items.append(submenuItem("Remove Custom Voice", items: buildRemoveCustomVoiceItems()))
+        }
         return items
+    }
+
+    private func buildRemoveCustomVoiceItems() -> [NSMenuItem] {
+        config.customVoices.map { v in
+            item(v.name, #selector(removeCustomVoice(_:)), repr: v.id, on: false)
+        }
     }
 
     private func buildLocalVoiceItems() -> [NSMenuItem] {
@@ -1058,24 +1335,54 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         scheduleRespeak()
     }
 
-    @objc private func customVoice() {
+    @objc private func addCustomVoice() {
         NSApp.setActivationPolicy(.regular)
         defer { NSApp.setActivationPolicy(.accessory) }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Custom Voice ID"
-        alert.informativeText = "Enter a voice ID from elevenlabs.io/voice-library"
+        alert.messageText = "Add Custom Voice"
+        alert.informativeText = "Enter a name and a voice ID from elevenlabs.io/voice-library."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
-        field.stringValue = config.voiceId
-        field.placeholderString = "e.g. pFZP5JQG7iQjIQuC4Bku"
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
+
+        // Two stacked fields (name on top, ID below). EditableTextField so ⌘V works.
+        let nameField = EditableTextField(frame: NSRect(x: 0, y: 30, width: 320, height: 22))
+        nameField.placeholderString = "Name (e.g. Antoni)"
+        let idField = EditableTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
+        idField.placeholderString = "Voice ID (e.g. pFZP5JQG7iQjIQuC4Bku)"
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 52))
+        container.addSubview(nameField)
+        container.addSubview(idField)
+        nameField.nextKeyView = idField
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = nameField
+
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let val = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !val.isEmpty else { return }
-        config.voiceId = val
+        let id = idField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !id.isEmpty else { return }
+        var name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
+        if name.isEmpty { name = id }
+
+        // Update the name if this ID already exists, otherwise append.
+        if let idx = config.customVoices.firstIndex(where: { $0.id == id }) {
+            config.customVoices[idx].name = name
+        } else {
+            config.customVoices.append(CustomVoice(name: name, id: id))
+        }
+        config.voiceId = id
+        config.save()
+        rebuildMenu()
+        scheduleRespeak()
+    }
+
+    @objc private func removeCustomVoice(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        config.customVoices.removeAll { $0.id == id }
+        // If the removed voice was active, fall back to the default preset.
+        if config.voiceId == id {
+            config.voiceId = knownVoices.first?.id ?? "pFZP5JQG7iQjIQuC4Bku"
+        }
         config.save()
         rebuildMenu()
         scheduleRespeak()
@@ -1116,7 +1423,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         alert.informativeText = "Milliseconds of silence between sentences (at 1\u{00D7} speed). Set to 0 for no pause."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 22))
+        let field = EditableTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 22))
         field.stringValue = String(config.sentencePause)
         field.placeholderString = "e.g. 400"
         alert.accessoryView = field
@@ -1128,6 +1435,38 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         config.save()
         rebuildMenu()
         scheduleRespeak()
+    }
+
+    @objc private func editHotkey() {
+        NSApp.setActivationPolicy(.regular)
+        defer { NSApp.setActivationPolicy(.accessory) }
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Suspend our own tap while recording, or pressing the current shortcut
+        // to re-record it would be consumed and start speaking instead.
+        if let tap = globalTap { CGEvent.tapEnable(tap: tap, enable: false) }
+        defer { if let tap = globalTap { CGEvent.tapEnable(tap: tap, enable: true) } }
+
+        let alert = NSAlert()
+        alert.messageText = "Set Shortcut"
+        alert.informativeText = "Press the key combination you want to use \u{2014} "
+            + "either a function key (F1\u{2013}F20) on its own, or any key with "
+            + "\u{2318}, \u{2325} or \u{2303}."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let recorder = HotkeyRecorderView(initial: config.hotkey)
+        alert.accessoryView = recorder
+        alert.window.initialFirstResponder = recorder
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let picked = recorder.hotkey
+        guard picked.isValid, picked != config.hotkey else { return }
+
+        config.hotkey = picked
+        config.save()
+        gHotkey = picked
+        rebuildMenu()
     }
 
     @objc private func pickStability(_ sender: NSMenuItem) {
@@ -1288,7 +1627,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
                 alert.addButton(withTitle: "Remove")
             }
 
-            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
+            let field = EditableTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
             if errorMessage == nil, let key = existingKey {
                 if key.count > 8 {
                     let start = key.prefix(4)
